@@ -181,7 +181,7 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 |---|---|
 | `project` | `name`, `repo` (owner/name), `branch`, `root` (the orchestrator's clone on the box, default `~/fleet/<name>`), `docs` |
 | `machine` | node/pnpm versions, and whether bootstrap sets up `docker`, `tailscale`, `firewall`, `turbo_remote` |
-| `harnesses` | agent CLIs: `kind` (`claude-code`, `opencode`, `antigravity`), `install`, `login`, `smoke`, `env`, `env_file` — see [Harnesses](#harnesses) |
+| `harnesses` | agent CLIs: `kind` (`claude-code`, `opencode`, `antigravity`), `install`, `login`, `smoke`, `min_version`, `update`, `env`, `env_file` — see [Harnesses](#harnesses) |
 | `profiles` | `harness` + `model` + `role` (`implementer`, `reviewer`, `fixer`) + `vendor` + `concurrency` + `waves` |
 | `waves` | ordered work streams; each becomes a `wave:<name>` label and sets dispatch priority |
 | `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint` |
@@ -242,9 +242,10 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`.
 |---|---|---|
 | `fleet init [--repo o/n]` | Scaffold `fleet.yaml`, `AGENTS.md`, issue template. Never overwrites. | anywhere |
 | `fleet bootstrap` | apt packages, docker, fnm + node, pnpm, gh, tailscale, ufw, SSH key-only, fleet dirs. Each step checks first and re-checks after applying | box |
-| `fleet harness add <name>` | Run `install`, write `env_file`, run `smoke` | anywhere |
+| `fleet harness add <name>` | Run `install`, check `min_version`, write `env_file`, run `smoke` | anywhere |
 | `fleet harness login <name>` | Run the interactive `login` (use tmux over SSH) | anywhere |
-| `fleet harness verify` | Throwaway worktree; every harness runs the gate headless; PASS/FAIL table | box |
+| `fleet harness verify` | Check `min_version`s, then a throwaway worktree where every harness runs the gate headless; PASS/FAIL table | box |
+| `fleet harness update [name]` | Run each CLI's self-update (`claude update`, `opencode upgrade`, `agy update`), then check `min_version`. Run weekly | anywhere |
 | `fleet github init` | Create/update all labels; write the Telegram notify workflow | anywhere |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |
 | `fleet orchestrator init` | Install the orchestrator, render its config, install the systemd user unit, enable linger | box |
@@ -315,6 +316,15 @@ More workers won't fix a failing loop.
 - **Secrets** live only in `~/.config/fleet/env` and per-harness env files, both `0600`. Never in `fleet.yaml`, the repo or issues. Put a hard spend cap on every provider key that supports one.
 - **Network:** `bootstrap` denies all incoming traffic except SSH and the tailnet, and turns off SSH password auth. Bind the orchestrator dashboard to your Tailscale IP, never `0.0.0.0`.
 - **What vendors see.** Every model in the fleet reads your code, issues and specs, not just your data. Choose vendors with that in mind, and keep production credentials and real customer data out of any repo a fleet works on. Run with mocks.
+- **Only you write instructions.** Recent vulnerabilities in agent CLIs and their GitHub Actions (Claude Code before 2.1.163; `claude-code-action` before 1.0.74; Gemini CLI before 0.39.1) let untrusted repository or GitHub content reach an agent and leak keys. On a fleet-managed repo:
+  - only the repo owner, and the owner's own agent sessions, write issue bodies;
+  - no issue templates or forms that external users can trigger. The template `fleet init` writes applies no labels, so `agent-ready` is always applied by hand;
+  - no external contributors, and no outside collaborators with triage or write access;
+  - no workflows that run an agent on someone else's event. If you use `claude-code-action`, pin it to 1.0.74 or later;
+  - harnesses updated weekly with `fleet harness update`.
+
+  `fleet init` writes these rules into `AGENTS.md` as a trust boundary for agents too.
+- **Harness versions are pinned from below.** Each harness's `min_version` is enforced by `harness add`, `harness verify` and `harness update`. `fleet.example.yaml` sets floors from each project's security advisories and says which advisory each one comes from.
 - **Values are quoted for the shell.** Everything interpolated into a shell command (titles, bodies, labels, paths) is passed as a literal, so issue text can't inject commands on the box.
 
 ## Status

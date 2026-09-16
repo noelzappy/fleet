@@ -21,14 +21,21 @@ machine:
     team: your-team
 
 # Harnesses are the agent CLIs. Several profiles can share one harness.
+# min_version: harness add/verify/update refuse anything older. Floors as of 2026-09-16:
+#   claude-code 2.1.163  GHSA-7835-87q9-rgvv (sandbox escape), GHSA-fg94-h982-f3mm (WebFetch exfiltration)
+#   opencode    1.1.10   GHSA-c83v-7274-4vgp (web UI XSS -> command execution), GHSA-vxw4-wv6m-9hhh
+#   antigravity 1.1.28   no published advisories; first release whose -p runs don't hang on plan approval
+# Re-check advisories when you run `fleet harness update` (weekly).
 harnesses:
   claude-code:
     kind: claude-code
+    min_version: 2.1.163
     install: npm i -g @anthropic-ai/claude-code
     login: claude login
     smoke: cd /tmp && claude -p "print OK and exit" --output-format text | tail -1 | grep -q OK
   glm:                          # Claude Code pointed at an Anthropic-compatible endpoint
     kind: claude-code
+    min_version: 2.1.163
     env_file: ~/.config/fleet/profiles/glm.env
     env:
       ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic   # verify against the provider's docs
@@ -37,11 +44,13 @@ harnesses:
     smoke: cd /tmp && claude -p "print OK and exit" --output-format text | tail -1 | grep -q OK
   antigravity:                  # Antigravity CLI (agy) — replaced Gemini CLI; uses your Google AI subscription
     kind: antigravity
+    min_version: 1.1.28
     install: curl -fsSL https://antigravity.google/cli/install.sh | bash
     login: agy                  # first interactive run signs in; over SSH it prints a URL, paste the code back
     smoke: cd /tmp && agy -p "Reply with exactly OK" --output-format text | tail -1 | grep -q OK
   opencode:                     # API-key providers (DeepSeek etc.); its Google provider needs an API key, not a subscription
     kind: opencode
+    min_version: 1.1.10
     install: npm i -g opencode-ai
     login: opencode auth login
     smoke: cd /tmp && opencode run "print OK" | tail -1 | grep -q OK

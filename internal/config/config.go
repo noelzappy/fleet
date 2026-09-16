@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,12 +55,16 @@ type Turbo struct {
 }
 
 type Harness struct {
-	Kind    string            `yaml:"kind"`     // one of HarnessKinds
-	Install string            `yaml:"install"`  // shell
-	Login   string            `yaml:"login"`    // interactive; CLI sequences + verifies
-	Smoke   string            `yaml:"smoke"`    // headless; must exit 0
-	Env     map[string]string `yaml:"env"`      // e.g. ANTHROPIC_BASE_URL for GLM
-	EnvFile string            `yaml:"env_file"` // ~/.config/fleet/profiles/<name>.env
+	Kind    string `yaml:"kind"`    // one of HarnessKinds
+	Install string `yaml:"install"` // shell
+	Login   string `yaml:"login"`   // interactive; CLI sequences + verifies
+	Smoke   string `yaml:"smoke"`   // headless; must exit 0
+	// MinVersion is the lowest version fleet will run. harness add/verify/update fail below it.
+	// Set it from the tool's security advisories; see README › Security model.
+	MinVersion string            `yaml:"min_version"`
+	Update     string            `yaml:"update"`   // overrides the kind's default update command
+	Env        map[string]string `yaml:"env"`      // e.g. ANTHROPIC_BASE_URL for GLM
+	EnvFile    string            `yaml:"env_file"` // ~/.config/fleet/profiles/<name>.env
 }
 
 type Profile struct {
@@ -208,6 +214,11 @@ func (f *Fleet) validate() error {
 		if !contains(HarnessKinds, h.Kind) {
 			return fmt.Errorf("harness %q: kind %q is not one of %s", name, h.Kind, strings.Join(HarnessKinds, ", "))
 		}
+		if h.MinVersion != "" {
+			if _, err := ParseVersion(h.MinVersion); err != nil {
+				return fmt.Errorf("harness %q: min_version: %w", name, err)
+			}
+		}
 	}
 	if _, err := time.ParseDuration(f.Gate.Timeout); err != nil {
 		return fmt.Errorf("gate.timeout: %w", err)
@@ -355,4 +366,41 @@ func contains(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+var versionRE = regexp.MustCompile(`\d+(?:\.\d+)+`)
+
+// ParseVersion extracts the first dotted version number from s, so it accepts both
+// "2.1.163" and CLI output such as "2.1.273 (Claude Code)" or "v1.18.18".
+func ParseVersion(s string) ([]int, error) {
+	m := versionRE.FindString(s)
+	if m == "" {
+		return nil, fmt.Errorf("no version number in %q", s)
+	}
+	var v []int
+	for _, part := range strings.Split(m, ".") {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("version %q: %w", m, err)
+		}
+		v = append(v, n)
+	}
+	return v, nil
+}
+
+// VersionAtLeast reports whether have >= min. Missing trailing parts count as 0.
+func VersionAtLeast(have, min []int) bool {
+	for i := 0; i < len(have) || i < len(min); i++ {
+		var h, m int
+		if i < len(have) {
+			h = have[i]
+		}
+		if i < len(min) {
+			m = min[i]
+		}
+		if h != m {
+			return h > m
+		}
+	}
+	return true
 }

@@ -125,6 +125,8 @@ func TestValidate(t *testing.T) {
 		{"unknown kind", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "codex"} }, "not one of"},
 		{"antigravity kind ok", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "antigravity"} }, ""},
 		{"bad gate timeout", func(f *Fleet) { f.Gate.Timeout = "soon" }, "gate.timeout"},
+		{"bad min_version", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "claude-code", MinVersion: "latest"} }, "min_version"},
+		{"good min_version", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "claude-code", MinVersion: "2.1.163"} }, ""},
 		{"unknown harness", func(f *Fleet) { p := f.Profiles["impl"]; p.Harness = "nope"; f.Profiles["impl"] = p }, "unknown harness"},
 		{"missing vendor", func(f *Fleet) { p := f.Profiles["rev"]; p.Vendor = ""; f.Profiles["rev"] = p }, "vendor is required"},
 		{"same-vendor review", func(f *Fleet) { p := f.Profiles["rev"]; p.Vendor = "anthropic"; f.Profiles["rev"] = p }, "cross_vendor_review"},
@@ -266,5 +268,37 @@ func TestResolveVar(t *testing.T) {
 				t.Errorf("got (%q, %v), want (%q, %v)", got, ok, tt.want, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestVersions(t *testing.T) {
+	tests := []struct {
+		have, min string
+		want      bool
+	}{
+		{"2.1.273 (Claude Code)", "2.1.163", true},
+		{"2.1.163", "2.1.163", true},
+		{"2.1.162", "2.1.163", false},
+		{"2.1.99", "2.1.163", false}, // numeric, not lexical
+		{"v1.18.18", "1.1.10", true},
+		{"1.1.21", "1.1.28", false},
+		{"1.2", "1.2.0", true},
+		{"1.10.0", "1.9.9", true},
+		{"agy version 1.2.4\nbuild abc", "1.1.28", true},
+	}
+	for _, tt := range tests {
+		have, err := ParseVersion(tt.have)
+		if err != nil {
+			t.Fatalf("ParseVersion(%q): %v", tt.have, err)
+		}
+		min, _ := ParseVersion(tt.min)
+		if got := VersionAtLeast(have, min); got != tt.want {
+			t.Errorf("VersionAtLeast(%q, %q) = %v, want %v", tt.have, tt.min, got, tt.want)
+		}
+	}
+	for _, bad := range []string{"", "latest", "v2"} {
+		if _, err := ParseVersion(bad); err == nil {
+			t.Errorf("ParseVersion(%q) should fail", bad)
+		}
 	}
 }
