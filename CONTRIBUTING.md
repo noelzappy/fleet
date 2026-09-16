@@ -41,7 +41,7 @@ fleet.example.yaml      annotated reference config (kept identical to internal/t
 
 The fleet box is Linux; you'll probably develop on something else.
 
-- **Anywhere:** build, unit tests, every `--dry-run`, template rendering, `init`, `issues sync` against a scratch repo, `harness add` and `harness verify` if the CLIs (and Docker) are installed locally.
+- **Anywhere:** build, unit tests, every `--dry-run`, template rendering, `init`, `issues sync` against a scratch repo, and `harness add` / `verify` / `update` with the agent CLIs installed locally: Claude Code (`claude`), OpenCode (`opencode`) and Antigravity CLI (`agy`, which replaced Gemini CLI). Read their real `--help` before changing `internal/cli/kinds.go`. `harness verify` also needs Docker if the gate does.
 - **Linux only:** `bootstrap`, `orchestrator init/run`, `up`, `pause --hard`, `resume`, `panic`. These refuse to run on other OSes unless `--dry-run` is set (`requireLinux` in `internal/cli/root.go`).
 
 ### Testing Linux commands on a box
@@ -69,7 +69,7 @@ Each step: implement → `make test` → run it for real (locally or on a box) �
 1. ~~`config`: `${VAR}` expansion, `ApplyDefaults`, tests, Linux guard~~
 2. `bootstrap` on a fresh Ubuntu 24.04 box; the second run is a no-op
 3. `harness add/login/verify`: every harness runs the gate headless in a worktree; document OAuth-over-SSH login steps
-4. `orchestrator init/run`: match the AO template to `ao config-help`; systemd unit; dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
+4. orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` for the chosen backend; systemd unit; dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
 5. `github init`: labels, notify workflow, GitHub App manifest flow; Telegram fires on a test label
 6. `issues sync` against a scratch repo with dependencies
 7. `kill`, `panic`, `status` (active sessions), `digest`
