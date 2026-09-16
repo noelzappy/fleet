@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/noelzappy/fleet/internal/templates"
 	"github.com/spf13/cobra"
@@ -35,6 +37,24 @@ func githubInit(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	// pr-contract: the required check that enforces the PR body contract and the
+	// cross-vendor review rule (docs/orchestrator-decision.md › Closing the gaps).
+	vendors := map[string]string{}
+	for name, p := range cfg.Profiles {
+		vendors[name] = p.Vendor
+	}
+	vj, _ := json.Marshal(vendors)
+	pc, err := templates.Render("pr-contract.yml.tmpl", struct {
+		*config.Fleet
+		VendorsJSON string
+	}{cfg, string(vj)})
+	if err != nil {
+		return err
+	}
+	if err := shell.WriteFile(filepath.Join(cfg.Project.Root, ".github/workflows/pr-contract.yml"), pc, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "commit .github/workflows/pr-contract.yml via a PR and add pr-contract to the branch's required checks")
 	if cfg.Notify.Telegram != nil {
 		b, err := templates.Render("fleet-notify.yml.tmpl", cfg)
 		if err != nil {

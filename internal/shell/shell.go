@@ -40,6 +40,20 @@ func Output(ctx context.Context, cmd string) (string, error) {
 	return strings.TrimSpace(string(b)), err
 }
 
+// OutputInput is Output with stdin supplied, for commands that read a body from
+// stdin (issue descriptions, comments) so it never touches the argv or shell history.
+func OutputInput(ctx context.Context, cmd, stdin string) (string, error) {
+	fmt.Fprintf(os.Stderr, "→ %s  <<(%d bytes on stdin)\n", cmd, len(stdin))
+	if DryRun {
+		return "", nil
+	}
+	c := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	c.Stdin = strings.NewReader(stdin)
+	c.Stderr = os.Stderr
+	b, err := c.Output()
+	return strings.TrimSpace(string(b)), err
+}
+
 // Check runs cmd quietly and reports whether it exited 0. It is how idempotent steps
 // decide whether to act. Under --dry-run it prints cmd and reports false, so the
 // action that would follow is printed too.

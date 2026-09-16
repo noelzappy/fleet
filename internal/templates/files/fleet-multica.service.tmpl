@@ -1,5 +1,5 @@
 [Unit]
-Description=Fleet orchestrator ({{ .Orchestrator.Kind }}) for {{ .Project.Name }}
+Description=Multica agent daemon for {{ .Project.Name }} (fleet)
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory={{ .Project.Root }}
 EnvironmentFile=%h/.config/fleet/env
-ExecStart=%h/.local/bin/fleet orchestrator run
+ExecStart=%h/.local/bin/fleet -c {{ .ConfigPath }} orchestrator run
 Restart=on-failure
 RestartSec=10
 

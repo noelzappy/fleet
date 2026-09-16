@@ -6,7 +6,7 @@ Thanks for helping. This file covers the rules the codebase holds to, how to dev
 
 These are what keep `fleet` safe to run against a real repo and a real server. A PR that breaks one needs a very good reason in its description.
 
-1. **Wrap the orchestrator; never become one.** fleet configures and runs an orchestrator, manages labels, issues and PRs through `gh`, and controls the service through systemd. It never decides which session runs next. If you find yourself writing a dispatcher, a retry loop or a queue, that belongs in the orchestrator.
+1. **Wrap the orchestrator; never become one.** fleet configures and runs Multica, manages labels, issues and PRs through `gh`, and controls the service through systemd. `fleet sync` decides only what is *eligible* (labels, dependencies, pause, attempts, which profile). It never decides which session runs next, never manages sessions, never retries. If a change to `internal/fleetsync` would pick *the next thing to run*, it belongs in Multica.
 2. **Every command is idempotent.** Running a command again on an already-configured machine changes nothing. Check before acting: `command -v x || install x`, `grep -q || append`, `--force` on label creation.
 3. **All side effects go through `internal/shell`.** Commands use `shell.Run`, `shell.Output` or `shell.Interactive`; files are written with `shell.WriteFile`. That is what makes `--dry-run` trustworthy: it prints every command and write and touches nothing. Don't import `os/exec` or call `os.WriteFile` anywhere else.
 4. **Quote everything you interpolate.** Any value that reaches a shell string (config values, issue titles and bodies, paths, prompts) goes through `shell.Quote`. Go's `%q` is *not* shell quoting: bash still expands `$`, backticks and `\` inside it.
@@ -30,10 +30,12 @@ Layout:
 
 ```
 cmd/fleet/              main
-internal/cli/           one file per command group (cobra)
+internal/cli/           one file per command group (cobra); kinds.go holds per-harness CLI knowledge; sync.go observes and applies
 internal/config/        fleet.yaml types, defaults, validation, ${VAR} expansion
+internal/fleetsync/     the pure planner behind `fleet sync` (rules in docs/orchestrator-decision.md › Closing the gaps)
 internal/shell/         the only place commands run and files are written
-internal/templates/     embedded files fleet renders (AO config, systemd unit, workflow, AGENTS.md, issue template)
+internal/templates/     embedded files fleet renders (Multica env + compose override, systemd units, workflows, AGENTS.md, issue template)
+docs/                   decisions
 fleet.example.yaml      annotated reference config (kept identical to internal/templates/files/fleet.example.yaml by a test)
 ```
 
@@ -69,7 +71,7 @@ Each step: implement → `make test` → run it for real (locally or on a box) �
 1. ~~`config`: `${VAR}` expansion, `ApplyDefaults`, tests, Linux guard~~
 2. `bootstrap` on a fresh Ubuntu 24.04 box; the second run is a no-op
 3. `harness add/login/verify`: every harness runs the gate headless in a worktree; document OAuth-over-SSH login steps
-4. orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` for the chosen backend; systemd unit; dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
+4. orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` against a live Multica on the box; `sync` end to end (create → escalate → unblock → review → nudge → stuck); dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
 5. `github init`: labels, notify workflow, GitHub App manifest flow; Telegram fires on a test label
 6. `issues sync` against a scratch repo with dependencies
 7. `kill`, `panic`, `status` (active sessions), `digest`

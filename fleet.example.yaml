@@ -82,11 +82,16 @@ routing:
   max_gate_attempts: 3          # then the issue is labelled agent-stuck
   fixer_only_lint: true         # fixers retry lint/typecheck only; test failures go back to the implementer
 
+# Multica runs the agents (see docs/orchestrator-decision.md). fleet sync mirrors
+# eligible GitHub issues into it and its state back as labels.
 orchestrator:
-  kind: ao
-  config_path: agent-orchestrator.yaml   # relative to project.root
-  dashboard_bind: 100.64.0.1:3000        # your tailscale IP — never 0.0.0.0
-  service_name: fleet-ao
+  kind: multica
+  dir: ~/fleet/multica            # clone of multica-ai/multica; compose files live here
+  dashboard_bind: 100.64.0.1      # IP for the web UI (:3000) and API (:8080); your tailscale IP, never 0.0.0.0
+  service_name: fleet-multica     # systemd units: fleet-multica (daemon), fleet-multica-sync.timer
+  workspace: widgets              # Multica workspace; created by orchestrator init
+  sync_interval: 2m
+  owner_email: you@example.com    # optional; restricts Multica sign-up to this address
 
 github:
   app_slug: widgets-fleet
@@ -105,5 +110,6 @@ notify:
 gate:
   command: pnpm gate            # the single command a PR must pass
   timeout: 15m
+  workflow: gate                # the GitHub Actions workflow that runs it on PRs; fleet sync counts its failures
 
 labels: {}   # defaults: agent-ready, agent-assist, human-required, needs-human, needs-resource, needs-contract, blocked-by, agent-stuck, fleet-paused

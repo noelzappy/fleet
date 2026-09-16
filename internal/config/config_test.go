@@ -44,7 +44,12 @@ func TestLoadExample(t *testing.T) {
 		{"private key expands ~", f.GitHub.PrivateKeyPath, filepath.Join(home, ".config/fleet/gh-app.pem")},
 		{"required checks", f.GitHub.RequiredChecks, []string{"gate", "pr-contract"}},
 		{"telegram token secret", f.Notify.Telegram.TokenSecret, "TG_TOKEN"},
-		{"service name", f.Orchestrator.ServiceName, "fleet-ao"},
+		{"service name", f.Orchestrator.ServiceName, "fleet-multica"},
+		{"orchestrator dir expands ~", f.Orchestrator.Dir, filepath.Join(home, "fleet/multica")},
+		{"sync interval", f.Orchestrator.SyncInterval, "2m"},
+		{"wave label default", f.Waves[0].WaveLabel(), "wave:contracts"},
+		{"wave for label", f.WaveForLabel("wave:ui"), "ui"},
+		{"implementers for contracts", f.ProfilesWhere(func(_ string, p Profile) bool { return p.Role == RoleImplementer && contains(p.Waves, "contracts") }), []string{"impl-gemini", "impl-glm"}},
 		{"labels default ready", f.Labels.Ready, "agent-ready"},
 		{"labels default paused", f.Labels.Paused, "fleet-paused"},
 	}
@@ -85,8 +90,9 @@ func TestApplyDefaults(t *testing.T) {
 		{"gate command", Fleet{}, func(f *Fleet) (any, any) { return f.Gate.Command, "pnpm gate" }},
 		{"gate timeout", Fleet{}, func(f *Fleet) (any, any) { return f.Gate.Timeout, "15m" }},
 		{"max gate attempts", Fleet{}, func(f *Fleet) (any, any) { return f.Routing.MaxGateAttempts, 3 }},
-		{"orchestrator kind", Fleet{}, func(f *Fleet) (any, any) { return f.Orchestrator.Kind, "ao" }},
-		{"service name follows kind", Fleet{Orchestrator: Orchestrator{Kind: "vibe-kanban"}}, func(f *Fleet) (any, any) { return f.Orchestrator.ServiceName, "fleet-vibe-kanban" }},
+		{"orchestrator kind", Fleet{}, func(f *Fleet) (any, any) { return f.Orchestrator.Kind, "multica" }},
+		{"service name follows kind", Fleet{}, func(f *Fleet) (any, any) { return f.Orchestrator.ServiceName, "fleet-multica" }},
+		{"workspace follows project", Fleet{Project: Project{Name: "x"}}, func(f *Fleet) (any, any) { return f.Orchestrator.Workspace, "x" }},
 		{"custom label kept", Fleet{Labels: Labels{Stuck: "halp"}}, func(f *Fleet) (any, any) { return f.Labels.Stuck, "halp" }},
 	}
 	for _, tt := range tests {
@@ -110,8 +116,10 @@ func TestValidate(t *testing.T) {
 				"impl": {Harness: "cc", Role: "implementer", Vendor: "anthropic"},
 				"rev":  {Harness: "cc", Role: "reviewer", Vendor: "google"},
 			},
-			Routing: Routing{CrossVendorReview: true},
-			Gate:    Gate{Timeout: "15m"},
+			Routing:      Routing{CrossVendorReview: true},
+			Gate:         Gate{Timeout: "15m"},
+			Orchestrator: Orchestrator{Kind: "multica", SyncInterval: "2m"},
+			Waves:        []Wave{{Name: "ui"}},
 		}
 	}
 	tests := []struct {
@@ -125,6 +133,11 @@ func TestValidate(t *testing.T) {
 		{"unknown kind", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "codex"} }, "not one of"},
 		{"antigravity kind ok", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "antigravity"} }, ""},
 		{"bad gate timeout", func(f *Fleet) { f.Gate.Timeout = "soon" }, "gate.timeout"},
+		{"ao no longer supported", func(f *Fleet) { f.Orchestrator.Kind = "ao" }, "only multica"},
+		{"bad sync interval", func(f *Fleet) { f.Orchestrator.SyncInterval = "often" }, "sync_interval"},
+		{"bad role", func(f *Fleet) { p := f.Profiles["impl"]; p.Role = "coder"; f.Profiles["impl"] = p }, "must be implementer"},
+		{"unknown wave", func(f *Fleet) { p := f.Profiles["impl"]; p.Waves = []string{"nope"}; f.Profiles["impl"] = p }, "not in waves"},
+		{"known wave", func(f *Fleet) { p := f.Profiles["impl"]; p.Waves = []string{"ui"}; f.Profiles["impl"] = p }, ""},
 		{"bad min_version", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "claude-code", MinVersion: "latest"} }, "min_version"},
 		{"good min_version", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "claude-code", MinVersion: "2.1.163"} }, ""},
 		{"unknown harness", func(f *Fleet) { p := f.Profiles["impl"]; p.Harness = "nope"; f.Profiles["impl"] = p }, "unknown harness"},

@@ -32,16 +32,17 @@ You write issues. Agents pick them up, work in their own git worktrees, run your
 ```
  you ──write──▶ GitHub issues (agent-ready, wave:*, Depends on)
                      │
+        fleet sync (timer): eligible issues ─▶ Multica issues, one per profile
                      ▼
    ┌──────────── fleet box (Linux, always on) ────────────┐
-   │  systemd ─▶ fleet orchestrator run ─▶ orchestrator   │
-   │                                        (AO)          │
-   │        dispatches ready issues to profiles:          │
+   │  Multica (web UI + API, Tailscale only)              │
+   │  Multica daemon runs the agent CLIs per profile:     │
    │   implementer ─▶ worktree ─▶ gate ─▶ PR              │
    │   fixer       ─▶ lint/typecheck retries              │
    │   reviewer    ─▶ reviews PRs from other vendors      │
    └──────────────────────────────────────────────────────┘
                      │
+        fleet sync: blocked ─▶ needs-* label; gate failures ─▶ nudges / agent-stuck
                      ▼
  PRs + escalation labels ──GitHub Actions──▶ Telegram ──▶ you approve / answer
 ```
@@ -83,7 +84,7 @@ Other labels: `agent-ready` (the agent owns the issue end to end), `agent-assist
 - controls the service (`up`, `pause`, `resume`, `panic`);
 - summarises state in a few lines (`status`, `digest`).
 
-Scheduling, retries and session management belong to the orchestrator. Today that is [Agent Orchestrator](https://www.npmjs.com/package/@aoagents/ao) (`ao`). `vibe-kanban` is planned.
+Scheduling, retries and session management belong to the orchestrator: [Multica](https://github.com/multica-ai/multica), self-hosted on the box. Multica has its own issue board and no notion of GitHub labels, gates or cross-vendor review, so **`fleet sync`** (a systemd timer) bridges the two: it mirrors *eligible* GitHub issues into Multica and Multica's state back as labels, and a generated `pr-contract` check enforces the review rule. fleet decides only what is eligible; Multica decides when and where it runs. The reasoning and the exact rules are in [docs/orchestrator-decision.md](docs/orchestrator-decision.md).
 
 Every command is **idempotent**: running it again on a machine that's already set up changes nothing. Every command supports **`--dry-run`**, which prints each shell command and file write it would make and touches nothing.
 
@@ -165,10 +166,10 @@ fleet harness add claude-code     # install + smoke test; repeat per harness
 fleet harness login claude-code   # if the smoke test needs auth; run inside tmux
 fleet harness verify              # every harness runs the gate headless in a worktree
 
-fleet github init                 # labels + Telegram notify workflow (commit it via PR)
-fleet issues sync issues.yaml     # bulk-create issues, resolving depends_on
-fleet orchestrator init           # orchestrator config + systemd user unit
-fleet up
+fleet github init                 # labels, pr-contract check + Telegram workflow (commit them via PR)
+fleet issues sync issues.yaml     # bulk-create GitHub issues, resolving depends_on
+fleet orchestrator init           # Multica: compose, CLI login (PAT), workspace, repo, agents, systemd units
+fleet up                          # from then on `fleet sync` runs every sync_interval
 
 fleet status
 ```
@@ -185,10 +186,10 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 | `profiles` | `harness` + `model` + `role` (`implementer`, `reviewer`, `fixer`) + `vendor` + `concurrency` + `waves` |
 | `waves` | ordered work streams; each becomes a `wave:<name>` label and sets dispatch priority |
 | `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint` |
-| `orchestrator` | `kind` (default `ao`), `config_path`, `dashboard_bind`, `service_name` (default `fleet-<kind>`) |
+| `orchestrator` | `kind` (`multica`), `dir` (its checkout, default `~/fleet/multica`), `dashboard_bind` (IP, your Tailscale address), `service_name` (default `fleet-multica`), `workspace`, `sync_interval` (default `2m`), `owner_email` |
 | `github` | GitHub App slug, app-id env var name, private key path, `required_checks` |
 | `notify` | Telegram secret *names* (GitHub Actions secrets) and the digest schedule |
-| `gate` | `command` (default `pnpm gate`) and `timeout` (default `15m`) |
+| `gate` | `command` (default `pnpm gate`), `timeout` (default `15m`), `workflow` (the Actions workflow that runs it on PRs, default `gate`) |
 | `labels` | rename any label; unset ones use the defaults above |
 
 `fleet.yaml` is checked when loaded: every profile must name a known harness and a vendor, and with `cross_vendor_review` on, every implementer vendor needs a reviewer from a different vendor.
@@ -246,16 +247,17 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`.
 | `fleet harness login <name>` | Run the interactive `login` (use tmux over SSH) | anywhere |
 | `fleet harness verify` | Check `min_version`s, then a throwaway worktree where every harness runs the gate headless; PASS/FAIL table | box |
 | `fleet harness update [name]` | Run each CLI's self-update (`claude update`, `opencode upgrade`, `agy update`), then check `min_version`. Run weekly | anywhere |
-| `fleet github init` | Create/update all labels; write the Telegram notify workflow | anywhere |
+| `fleet github init` | Create/update all labels; write the `pr-contract` check and the Telegram notify workflow | anywhere |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |
-| `fleet orchestrator init` | Install the orchestrator, render its config, install the systemd user unit, enable linger | box |
-| `fleet orchestrator run` | Foreground orchestrator; the systemd unit calls this | box |
-| `fleet up` | Enable and start the service | box |
-| `fleet pause` | **Soft:** open a `fleet-paused` issue. No new dispatches; in-flight work finishes | anywhere |
-| `fleet pause --hard` | Stop the service now. Worktrees and branches persist | box |
-| `fleet resume` | Close `fleet-paused` issues and start the service | box |
-| `fleet kill <issue>` | Stop that session, label `agent-stuck`, remove its worktree, close its PR | box |
-| `fleet panic` | Stop the service, kill agent processes, print the manual rotation checklist | box |
+| `fleet sync` | One reconciliation tick: eligible GitHub issues → Multica; blocked/gate state → labels, nudges, reviews. The timer runs it; safe by hand | anywhere |
+| `fleet orchestrator init` | Install the Multica CLI and checkout, generate secrets, compose env/override bound to the Tailscale IP, start the server, log the CLI in (PAT), create workspace, repo and one agent per profile, install daemon + sync units | box |
+| `fleet orchestrator run` | Multica daemon in the foreground; the systemd unit calls this | box |
+| `fleet up` | Start the Multica server, daemon and sync timer | box |
+| `fleet pause` | **Soft:** open a `fleet-paused` issue. `sync` mirrors nothing new; in-flight work finishes | anywhere |
+| `fleet pause --hard` | Also stop the daemon and sync timer now (Multica re-queues interrupted runs when the daemon returns) | box |
+| `fleet resume` | Close `fleet-paused` issues and start the daemon and timer | box |
+| `fleet kill <issue>` | Cancel that issue's Multica runs, label `agent-stuck`, close its PR | anywhere |
+| `fleet panic` | Stop daemon and timer, kill agent processes, print the manual rotation checklist | box |
 | `fleet status` | Service state, paused, queue and escalation counts, open PRs (≤ 8 lines) | anywhere |
 | `fleet digest` | Daily summary (currently the same as `status`) | anywhere |
 
@@ -304,6 +306,7 @@ More workers won't fix a failing loop.
 
 **Pausing:**
 - **Soft pause** (`fleet pause`) stops new dispatches while running sessions finish and open their PRs. `fleet resume` closes the pause issue. Use it for day-to-day stops.
+- **Escalations round-trip through labels.** An agent that sets its Multica issue to `blocked` gets a `needs-*` label and its comment on the GitHub issue within one sync interval. Answer on GitHub, remove the label, and the next tick tells the agent to read your answer and continue.
 - **Hard pause** (`fleet pause --hard`) stops workers immediately. Use it before changing `AGENTS.md`, the issue template or the docs agents read: merge the change, then resume. Running sessions keep the version they started with.
 - **Kill** (`fleet kill <n>`) is for one runaway session. Afterwards, check that session's spend.
 - **Panic** (`fleet panic`) is for when you suspect compromise or runaway cost. Then, by hand: suspend the GitHub App installation, rotate every provider key, and inspect open PRs before resuming. That order removes agents' push access before their model access.
@@ -312,6 +315,7 @@ More workers won't fix a failing loop.
 
 ## Security model
 
+- **Agents run with permissions bypassed.** Multica starts every harness in its non-interactive, auto-approve mode (`--permission-mode bypassPermissions`, `--dangerously-skip-permissions`); nothing on the box should be something you can't rotate.
 - **Agents use a GitHub App, not your personal token.** Permissions: contents write, pull requests write, issues write, metadata read, checks read. **No administration and no workflows**, so an agent can't approve, merge past protection, or edit CI to weaken the gate.
 - **Secrets** live only in `~/.config/fleet/env` and per-harness env files, both `0600`. Never in `fleet.yaml`, the repo or issues. Put a hard spend cap on every provider key that supports one.
 - **Network:** `bootstrap` denies all incoming traffic except SSH and the tailnet, and turns off SSH password auth. Bind the orchestrator dashboard to your Tailscale IP, never `0.0.0.0`.
@@ -339,10 +343,11 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `status` | implemented; active sessions and spend per profile not yet shown |
 | `bootstrap` | written; not yet run on a real box |
 | `harness add/login/verify` | written; headless flags for each CLI unverified; OAuth-over-SSH steps not yet documented |
-| `orchestrator init/run` | written; **AO config template is a best guess**, not checked against `ao config-help` |
-| `github init` | labels and notify workflow; GitHub App manifest flow not implemented |
+| `orchestrator init/run` (Multica) | written against the Multica CLI built from source; not yet run against a live Multica |
+| `sync` | planner table-tested (26 cases); the observe/apply layer dry-runs but has not run against a live Multica |
+| `github init` | labels, `pr-contract` check and notify workflow; GitHub App manifest flow not implemented |
 | `issues sync` | implemented; not yet run against a live repo |
-| `up/pause/resume/kill/panic` | written; not yet verified on a box. Soft pause depends on the orchestrator honouring the `fleet-paused` rule |
+| `up/pause/resume/kill/panic` | written; not yet verified on a box |
 | `digest` | prints `status` only; merged-in-24h, gate pass rate and Telegram delivery to do |
 
 Build order for the rest of v0.1: bootstrap → harnesses → orchestrator → GitHub → issues → kill/panic/status/digest → init end to end.

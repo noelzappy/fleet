@@ -127,3 +127,54 @@ func TestHarnessKindsGateRun(t *testing.T) {
 		t.Errorf("cli knows %d kinds, config allows %d", len(harnessKinds), len(config.HarnessKinds))
 	}
 }
+
+func TestJSONRows(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		wantN    int
+		wantMore bool
+		wantErr  bool
+	}{
+		{"empty (dry-run)", "", 0, false, false},
+		{"bare array", `[{"id":"a"},{"id":"b"}]`, 2, false, false},
+		{"wrapped with has_more", `{"issues":[{"id":"a"}],"has_more":true}`, 1, true, false},
+		{"wrapped second key", `{"tasks":[{"id":"a"}]}`, 1, false, false},
+		{"wrong key", `{"things":[]}`, 0, false, true},
+		{"garbage", `nope`, 0, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, more, err := jsonRows(tt.in, "issues", "tasks")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if len(rows) != tt.wantN || more != tt.wantMore {
+				t.Errorf("got %d rows, more=%v; want %d, %v", len(rows), more, tt.wantN, tt.wantMore)
+			}
+		})
+	}
+}
+
+func TestSlugAndPrefix(t *testing.T) {
+	for in, want := range map[string]string{
+		"[ADMIN] Wallet freeze/unfreeze":     "admin-wallet-freeze-unfreeze",
+		"  ":                                  "task",
+		"A very long title that keeps going and going past forty characters": "a-very-long-title-that-keeps-going-and-g",
+	} {
+		if got := slug(in); got != want {
+			t.Errorf("slug(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for in, want := range map[string]string{"widgets": "WIDG", "my-app": "MYAP", "x": "X", "---": "FLT"} {
+		if got := issuePrefix(in); got != want {
+			t.Errorf("issuePrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNumStr(t *testing.T) {
+	if num(float64(42)) != 42 || num("7") != 7 || num(nil) != 0 || str(float64(3)) != "3" || str("x") != "x" || str(nil) != "" {
+		t.Error("num/str conversions")
+	}
+}

@@ -35,7 +35,7 @@ func Root() *cobra.Command {
 	root.PersistentFlags().BoolVar(&shell.DryRun, "dry-run", false, "print commands without running them")
 	root.AddCommand(
 		initCmd(), bootstrapCmd(), harnessCmd(), githubCmd(), orchestratorCmd(),
-		issuesCmd(), upCmd(), pauseCmd(), resumeCmd(), killCmd(), panicCmd(),
+		issuesCmd(), syncCmd(), upCmd(), pauseCmd(), resumeCmd(), killCmd(), panicCmd(),
 		statusCmd(), digestCmd(), versionCmd(),
 	)
 	return root

@@ -88,11 +88,16 @@ type Routing struct {
 	FixerOnlyLint     bool `yaml:"fixer_only_lint"`
 }
 
+// Orchestrator is the execution backend. Only multica is implemented; see
+// docs/orchestrator-decision.md for why and for what fleet bolts on around it.
 type Orchestrator struct {
-	Kind          string `yaml:"kind"` // ao | vibe-kanban | baton
-	ConfigPath    string `yaml:"config_path"`
-	DashboardBind string `yaml:"dashboard_bind"`
-	ServiceName   string `yaml:"service_name"`
+	Kind          string `yaml:"kind"`           // multica
+	Dir           string `yaml:"dir"`            // clone of multica-ai/multica (compose files); default ~/fleet/multica
+	DashboardBind string `yaml:"dashboard_bind"` // IP the web UI and API bind to; your tailscale IP, never 0.0.0.0
+	ServiceName   string `yaml:"service_name"`   // systemd unit prefix; default fleet-multica
+	Workspace     string `yaml:"workspace"`      // Multica workspace name; default project.name
+	SyncInterval  string `yaml:"sync_interval"`  // how often `fleet sync` reconciles GitHub and Multica; default 2m
+	OwnerEmail    string `yaml:"owner_email"`    // optional: the only email allowed to sign up to the Multica UI
 }
 
 type GitHub struct {
@@ -118,8 +123,9 @@ type Digest struct {
 }
 
 type Gate struct {
-	Command string `yaml:"command"`
-	Timeout string `yaml:"timeout"`
+	Command  string `yaml:"command"`
+	Timeout  string `yaml:"timeout"`
+	Workflow string `yaml:"workflow"` // GitHub Actions workflow that runs the gate on PRs; default "gate"
 }
 
 type Labels struct {
@@ -177,6 +183,9 @@ func (f *Fleet) ApplyDefaults() {
 	if f.Gate.Timeout == "" {
 		f.Gate.Timeout = "15m"
 	}
+	if f.Gate.Workflow == "" {
+		f.Gate.Workflow = "gate"
+	}
 	def := func(p *string, v string) {
 		if *p == "" {
 			*p = v
@@ -193,10 +202,20 @@ func (f *Fleet) ApplyDefaults() {
 	def(&l.Stuck, "agent-stuck")
 	def(&l.Paused, "fleet-paused")
 	if f.Orchestrator.Kind == "" {
-		f.Orchestrator.Kind = "ao"
+		f.Orchestrator.Kind = "multica"
 	}
 	if f.Orchestrator.ServiceName == "" {
 		f.Orchestrator.ServiceName = "fleet-" + f.Orchestrator.Kind
+	}
+	if f.Orchestrator.Dir == "" {
+		f.Orchestrator.Dir = "~/fleet/multica"
+	}
+	f.Orchestrator.Dir = ExpandPath(f.Orchestrator.Dir)
+	if f.Orchestrator.Workspace == "" {
+		f.Orchestrator.Workspace = f.Project.Name
+	}
+	if f.Orchestrator.SyncInterval == "" {
+		f.Orchestrator.SyncInterval = "2m"
 	}
 }
 
@@ -222,6 +241,28 @@ func (f *Fleet) validate() error {
 	}
 	if _, err := time.ParseDuration(f.Gate.Timeout); err != nil {
 		return fmt.Errorf("gate.timeout: %w", err)
+	}
+	if f.Orchestrator.Kind != "multica" {
+		return fmt.Errorf("orchestrator.kind %q: only multica is supported (docs/orchestrator-decision.md)", f.Orchestrator.Kind)
+	}
+	if _, err := time.ParseDuration(f.Orchestrator.SyncInterval); err != nil {
+		return fmt.Errorf("orchestrator.sync_interval: %w", err)
+	}
+	waves := map[string]bool{}
+	for _, w := range f.Waves {
+		waves[w.Name] = true
+	}
+	for name, p := range f.Profiles {
+		switch p.Role {
+		case RoleImplementer, RoleReviewer, RoleFixer:
+		default:
+			return fmt.Errorf("profile %q: role %q must be implementer, reviewer or fixer", name, p.Role)
+		}
+		for _, w := range p.Waves {
+			if !waves[w] {
+				return fmt.Errorf("profile %q: wave %q is not in waves", name, w)
+			}
+		}
 	}
 	for name, p := range f.Profiles {
 		if _, ok := f.Harnesses[p.Harness]; !ok {
@@ -403,4 +444,41 @@ func VersionAtLeast(have, min []int) bool {
 		}
 	}
 	return true
+}
+
+const (
+	RoleImplementer = "implementer"
+	RoleReviewer    = "reviewer"
+	RoleFixer       = "fixer"
+)
+
+// ProfilesWhere returns the names of profiles matching keep, sorted, so every
+// caller that picks "the profile for X" does so deterministically.
+func (f *Fleet) ProfilesWhere(keep func(name string, p Profile) bool) []string {
+	var out []string
+	for name, p := range f.Profiles {
+		if keep(name, p) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// WaveLabel is the GitHub label for a wave: its explicit label, else wave:<name>.
+func (w Wave) WaveLabel() string {
+	if w.Label != "" {
+		return w.Label
+	}
+	return "wave:" + w.Name
+}
+
+// WaveForLabel maps a GitHub label back to a wave name, or "".
+func (f *Fleet) WaveForLabel(label string) string {
+	for _, w := range f.Waves {
+		if w.WaveLabel() == label {
+			return w.Name
+		}
+	}
+	return ""
 }

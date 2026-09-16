@@ -1,0 +1,10 @@
+[Unit]
+Description=Run fleet sync every {{ .Orchestrator.SyncInterval }}
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec={{ .Orchestrator.SyncInterval }}
+Unit={{ .Orchestrator.ServiceName }}-sync.service
+
+[Install]
+WantedBy=timers.target

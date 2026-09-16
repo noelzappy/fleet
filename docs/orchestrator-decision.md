@@ -1,6 +1,6 @@
 # Orchestrator decision: Multica vs Agent Orchestrator (AO)
 
-**Status:** proposed, awaiting owner review · **Date:** 2026-09-16 · **Blocks:** `fleet orchestrator init`
+**Status:** accepted 2026-09-16 (Multica; gaps closed in fleet, see [Closing the gaps](#closing-the-gaps)) · **Date:** 2026-09-16
 
 ## Question
 
@@ -126,7 +126,48 @@ On the requirements that shape a multi-vendor fleet, Multica is the stronger exe
 
 AO's one real advantage is that it reads GitHub Issues directly, but only by assignee. Every other requirement would push `fleet` into calling `ao spawn` for each issue with its own label, dependency, routing and pause logic. That makes `fleet` the dispatcher, which is the one thing it must not become.
 
-## What changes in fleet
+## Closing the gaps
+
+Decision, 2026-09-16: every gap above that can be closed in code is closed by one bolt-on, **`fleet sync`**, plus a generated CI check. Agents run in permission-bypass mode, as Multica invokes them.
+
+### The line
+
+fleet sync may decide **what is eligible**: ready labels, dependencies closed, not paused, attempts left, which profile an issue or review is assigned to. It never decides **when or on which worker** something runs, never manages sessions, and never retries. Multica's per-agent concurrency and queue do that. If a change to `internal/fleetsync` would make fleet pick *the next thing to run*, it is on the wrong side of the line.
+
+### Ownership
+
+| System | Owns | fleet writes there |
+|---|---|---|
+| GitHub | intake (issues, labels, dependencies), PRs, CI, merge | escalation labels and comments, `agent-stuck` |
+| Multica | execution: runs, worktrees, sessions, issue statuses | creates issues (one per eligible GitHub issue, one per PR review), comments (nudges, unblocks), cancels |
+
+fleet keeps no state of its own. The mapping lives in Multica issue metadata (`fleet_repo`, `fleet_kind`, `gh_issue`, `gh_pr`, `fleet_profile`, `gate_nudged_run`), so a tick is a pure function of what it observes.
+
+### One tick (`fleet sync`, systemd timer every `orchestrator.sync_interval`)
+
+Observe: every GitHub issue (closed ones decide dependencies), fleet's Multica issues, open PRs on `agent/<issue>-*` branches with their gate-workflow runs. Then, in issue order:
+
+| Gap | Rule | Action |
+|---|---|---|
+| Label dispatch | issue is open, has `agent-ready`/`agent-assist`, no `needs-*`/`blocked-by`/`agent-stuck`/`human-required`, every `## Depends on` issue closed, no open `fleet-paused` issue, not yet mirrored | create Multica issue in `todo`, assigned to the implementer for its `wave:*` label (candidates sorted; spread by issue number; concurrency-0 profiles skipped) |
+| Dependencies | as above: `Depends on` must all be CLOSED on GitHub | nothing is created until then |
+| Soft pause | an open `fleet-paused` issue | no creates, no unblocks; running work finishes |
+| Escalation | Multica status `blocked` and no escalation label on GitHub | add the label the agent's last comment names (default `needs-human`) and comment the agent's text on GitHub |
+| Resume | escalation label removed by the owner, Multica still `blocked` | comment "unblocked, read the answer with gh" and set `todo` (starts a run) |
+| Gate | newest gate run on the PR failed, not yet reported | Multica comment `@profile` with the run and failed jobs (lint/typecheck-only failures go to a fixer when `fixer_only_lint`); `gate_nudged_run` prevents repeats |
+| Attempts | failed gate runs ≥ `max_gate_attempts` | `agent-stuck`, remove `agent-ready`, comment, cancel Multica runs |
+| Cross-vendor review | open PR on a mirrored issue with no review issue yet | create a Multica review issue assigned to a reviewer of a different vendor; it posts one `gh pr review` whose body ends `Reviewed-by: <profile> (<vendor>)` |
+
+Enforcement of the review rule is the generated **`pr-contract`** GitHub check (`fleet github init`), a required status check: PR body has `Closes #N` and `Model: <profile>`, and at least one review carries `Reviewed-by` from a profile whose vendor differs. Humans still approve and merge.
+
+### What stays open
+
+- **agy has no scoped allowlist**, and Multica runs every harness with permissions bypassed anyway. Accepted; the mitigation is the box: no production credentials, secrets rotated on `fleet panic`, Tailscale-only UI.
+- **Routing is not load-aware.** Spreading by issue number is deterministic and stateless; Multica queues per agent.
+- **`issue_dependency` in Multica is unused by fleet**: dependencies are enforced on the GitHub side before mirroring.
+- **Verification.** The planner is table-tested (`internal/fleetsync`), every command dry-runs, and the Multica CLI flags were read from the built CLI at `7e4758a`. Nothing has run against a live Multica yet; that happens in roadmap step 4 on the box.
+
+## What changes in fleet (original analysis)
 
 Multica doesn't use GitHub Issues as its backlog. Adopting it changes `fleet`'s model:
 
