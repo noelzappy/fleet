@@ -1,0 +1,15 @@
+[Unit]
+Description=Fleet orchestrator ({{ .Orchestrator.Kind }}) for {{ .Project.Name }}
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{ .Project.Root }}
+EnvironmentFile=%h/.config/fleet/env
+ExecStart=%h/.local/bin/fleet orchestrator run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

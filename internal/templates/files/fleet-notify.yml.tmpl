@@ -1,0 +1,32 @@
+name: fleet-notify
+on:
+  issues: { types: [labeled] }
+  pull_request: { types: [opened, ready_for_review] }
+  workflow_run: { workflows: [gate], types: [completed] }
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - id: msg
+        run: |
+          case "${{"{{"}} github.event_name {{"}}"}}" in
+            issues)
+              case "${{"{{"}} github.event.label.name {{"}}"}}" in
+                {{ .Labels.NeedsHuman }}|{{ .Labels.NeedsResource }}|{{ .Labels.NeedsContract }}|{{ .Labels.Stuck }})
+                  echo "text=🟠 ${{"{{"}} github.event.label.name {{"}}"}}: #${{"{{"}} github.event.issue.number {{"}}"}} ${{"{{"}} github.event.issue.title {{"}}"}}
+${{"{{"}} github.event.issue.html_url {{"}}"}}" >> $GITHUB_OUTPUT ;;
+                *) echo "text=" >> $GITHUB_OUTPUT ;;
+              esac ;;
+            pull_request)
+              echo "text=🟢 PR #${{"{{"}} github.event.pull_request.number {{"}}"}} ${{"{{"}} github.event.pull_request.title {{"}}"}}
+${{"{{"}} github.event.pull_request.html_url {{"}}"}}" >> $GITHUB_OUTPUT ;;
+            workflow_run)
+              if [ "${{"{{"}} github.event.workflow_run.conclusion {{"}}"}}" = "failure" ]; then
+                echo "text=🔴 gate failed: ${{"{{"}} github.event.workflow_run.head_branch {{"}}"}}
+${{"{{"}} github.event.workflow_run.html_url {{"}}"}}" >> $GITHUB_OUTPUT
+              else echo "text=" >> $GITHUB_OUTPUT; fi ;;
+          esac
+      - if: steps.msg.outputs.text != ''
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{"{{"}} secrets.{{ .Notify.Telegram.TokenSecret }} {{"}}"}}/sendMessage" \
+            -d chat_id="${{"{{"}} secrets.{{ .Notify.Telegram.ChatSecret }} {{"}}"}}" --data-urlencode text="${{"{{"}} steps.msg.outputs.text {{"}}"}}"

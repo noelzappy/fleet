@@ -1,0 +1,40 @@
+# AGENTS.md — {{ .Project.Name }}
+
+<!-- Scaffolded by `fleet init`. Fill every <FILL> before the first dispatch. -->
+
+## 1. What this system is
+<FILL: two sentences. What is real here — money, PII, prod infra — and why a wrong PR matters.>
+
+## 2. Repository layout
+<FILL>
+
+## 3. Labels decide what you may touch
+`{{ .Labels.Ready }}` — you own it end to end.
+`{{ .Labels.Assist }}` — implement; a human reviews test assertions before merge.
+`{{ .Labels.HumanRequired }}` — never assigned to you. If your task needs it, escalate.
+
+### Human-required areas (by path — hard boundary)
+<FILL: globs. Be exhaustive. Agents match paths, not concepts.>
+
+## 4. Non-negotiable rules
+<FILL: numbered. Each should be a lint rule where possible.>
+
+## 5. The gate
+`{{ .Gate.Command }}` must pass before a PR. {{ .Routing.MaxGateAttempts }} attempts, then escalate.
+Never: `.skip`, loosened assertions, `@ts-ignore`, widened `any`.
+
+## 6. Working an issue
+Read issue → read linked spec → failing tests named after acceptance criteria → implement inside `Scope` → gate → PR → exit.
+
+## 7. Escalation protocol
+Comment in the fixed shape, apply the label, exit:
+`{{ .Labels.NeedsHuman }}` | `{{ .Labels.NeedsResource }}` | `{{ .Labels.NeedsContract }}` | `{{ .Labels.BlockedBy }}`
+Fields: What I was doing / What's unclear / Options A,B with consequences / Recommendation / Branch state.
+
+## 8. Pull request contract
+Branch `agent/<issue>-<slug>`. Title `<type>(<module>): <what> [#<issue>]`. Body: Closes, What, AC→tests, Scope check, Not done, Model/cost. Never merge, never approve.
+
+## 9. Conventions
+<FILL or link CODE-STRUCTURE.md>
+
+## 10. When in doubt — escalate.
