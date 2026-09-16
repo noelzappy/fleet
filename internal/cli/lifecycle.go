@@ -91,7 +91,7 @@ func panicCmd() *cobra.Command {
 		}
 		ctx := context.Background()
 		shell.Run(ctx, `systemctl --user stop `+shell.Quote(cfg.Orchestrator.ServiceName), nil)
-		shell.Run(ctx, `pkill -f "claude -p"; pkill -f "opencode run"; pkill -f "gemini -p"; true`, nil)
+		shell.Run(ctx, `pkill -x claude; pkill -f "opencode run"; pkill -x agy; true`, nil)
 		fmt.Println("NOW, by hand:")
 		fmt.Println("  1. GitHub → Settings → Applications → " + cfg.GitHub.AppSlug + " → Suspend installation")
 		fmt.Println("  2. Rotate every key in ~/.config/fleet/env and provider dashboards")

@@ -181,7 +181,7 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 |---|---|
 | `project` | `name`, `repo` (owner/name), `branch`, `root` (the orchestrator's clone on the box, default `~/fleet/<name>`), `docs` |
 | `machine` | node/pnpm versions, and whether bootstrap sets up `docker`, `tailscale`, `firewall`, `turbo_remote` |
-| `harnesses` | agent CLIs: `kind` (`claude-code`, `opencode`, `gemini-cli`), `install`, `login`, `smoke`, `env`, `env_file` |
+| `harnesses` | agent CLIs: `kind` (`claude-code`, `opencode`, `antigravity`), `install`, `login`, `smoke`, `env`, `env_file` — see [Harnesses](#harnesses) |
 | `profiles` | `harness` + `model` + `role` (`implementer`, `reviewer`, `fixer`) + `vendor` + `concurrency` + `waves` |
 | `waves` | ordered work streams; each becomes a `wave:<name>` label and sets dispatch priority |
 | `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint` |
@@ -192,6 +192,27 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 | `labels` | rename any label; unset ones use the defaults above |
 
 `fleet.yaml` is checked when loaded: every profile must name a known harness and a vendor, and with `cross_vendor_review` on, every implementer vendor needs a reviewer from a different vendor.
+
+### Harnesses
+
+A harness is one agent CLI. Several profiles can share a harness with different models. These are the kinds fleet supports, with invocations checked against the installed CLIs:
+
+| `kind` | Binary | Install | Sign-in | Headless invocation fleet uses for `harness verify` |
+|---|---|---|---|---|
+| `claude-code` | `claude` | `npm i -g @anthropic-ai/claude-code` | `claude login` | `claude -p … --output-format text --allowedTools "Bash(<gate>)"` |
+| `opencode` | `opencode` | `npm i -g opencode-ai` | `opencode auth login` | `OPENCODE_CONFIG_CONTENT='{"permission":…}' opencode run …` (only the gate is allowed) |
+| `antigravity` | `agy` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | run `agy` once interactively | `agy -p … --output-format text --dangerously-skip-permissions --print-timeout <gate timeout + 10m>` |
+
+**Antigravity CLI replaces Gemini CLI.** Google moved Gemini CLI users to Antigravity CLI. Since 18 June 2026, Gemini CLI no longer serves requests for Google AI Pro/Ultra subscribers or free individual use. A `kind: gemini-cli` harness is rejected with a pointer to `antigravity`. Notes for a fleet box:
+- **Sign-in over SSH:** run `agy` in tmux. On an SSH session it prints an authorization URL; open it on your own machine and paste the code back.
+- **API key instead of a subscription:** set `"modelProvider": "gemini"` in `~/.gemini/antigravity-cli/settings.json` and export `GEMINI_API_KEY` (agy 1.1.13+).
+- **`--print-timeout` defaults to 5 minutes**, shorter than most gates, so fleet always passes it.
+- **No per-command allowlist.** agy only has `--dangerously-skip-permissions`, so an `antigravity` harness gets every tool during `harness verify`, while the other kinds are limited to the gate command.
+- `agy models` lists the model IDs to use in profiles (for example `gemini-3.1-pro-high`, `gemini-3.8-flash-medium`).
+
+**Google models through OpenCode need an API key.** OpenCode's Google provider takes a Gemini API key (AI Studio) or Vertex AI credentials; it can't use a Google AI Pro/Ultra subscription. The third-party `opencode-antigravity-auth` plugin that tried is archived, says in its own README that it violates Google's Terms of Service, and users report account bans. To use a subscription, route Google profiles through an `antigravity` harness instead, as `fleet.example.yaml` does.
+
+**Anthropic-compatible endpoints** (GLM and others) use `kind: claude-code` with `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` in `env`; see the `glm` harness in the example.
 
 ### Secrets
 

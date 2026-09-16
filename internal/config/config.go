@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -52,7 +53,7 @@ type Turbo struct {
 }
 
 type Harness struct {
-	Kind    string            `yaml:"kind"`     // claude-code | opencode | gemini-cli
+	Kind    string            `yaml:"kind"`     // one of HarnessKinds
 	Install string            `yaml:"install"`  // shell
 	Login   string            `yaml:"login"`    // interactive; CLI sequences + verifies
 	Smoke   string            `yaml:"smoke"`    // headless; must exit 0
@@ -193,9 +194,23 @@ func (f *Fleet) ApplyDefaults() {
 	}
 }
 
+// HarnessKinds are the agent CLIs fleet knows how to install, run headless and check.
+var HarnessKinds = []string{"claude-code", "opencode", "antigravity"}
+
 func (f *Fleet) validate() error {
 	if f.Project.Name == "" || f.Project.Repo == "" {
 		return fmt.Errorf("project.name and project.repo are required")
+	}
+	for name, h := range f.Harnesses {
+		if h.Kind == "gemini-cli" {
+			return fmt.Errorf("harness %q: kind gemini-cli was replaced by antigravity (Google folded Gemini CLI into Antigravity CLI)", name)
+		}
+		if !contains(HarnessKinds, h.Kind) {
+			return fmt.Errorf("harness %q: kind %q is not one of %s", name, h.Kind, strings.Join(HarnessKinds, ", "))
+		}
+	}
+	if _, err := time.ParseDuration(f.Gate.Timeout); err != nil {
+		return fmt.Errorf("gate.timeout: %w", err)
 	}
 	for name, p := range f.Profiles {
 		if _, ok := f.Harnesses[p.Harness]; !ok {
@@ -331,4 +346,13 @@ func ExpandEnv(m map[string]string, lookup Lookup) (map[string]string, error) {
 		return nil, fmt.Errorf("unset variables %s — add them to %s", strings.Join(names, ", "), SecretsFile)
 	}
 	return out, nil
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

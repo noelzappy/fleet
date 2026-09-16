@@ -35,7 +35,12 @@ harnesses:
       ANTHROPIC_AUTH_TOKEN: ${GLM_API_KEY}
       ANTHROPIC_MODEL: glm-5.3                              # verify the current model id
     smoke: cd /tmp && claude -p "print OK and exit" --output-format text | tail -1 | grep -q OK
-  opencode:
+  antigravity:                  # Antigravity CLI (agy) — replaced Gemini CLI; uses your Google AI subscription
+    kind: antigravity
+    install: curl -fsSL https://antigravity.google/cli/install.sh | bash
+    login: agy                  # first interactive run signs in; over SSH it prints a URL, paste the code back
+    smoke: cd /tmp && agy -p "Reply with exactly OK" --output-format text | tail -1 | grep -q OK
+  opencode:                     # API-key providers (DeepSeek etc.); its Google provider needs an API key, not a subscription
     kind: opencode
     install: npm i -g opencode-ai
     login: opencode auth login
@@ -46,12 +51,12 @@ harnesses:
 # must have at least one reviewer from a different vendor.
 profiles:
   impl-sonnet:   { harness: claude-code, model: claude-sonnet-5,       role: implementer, vendor: anthropic, concurrency: 2, waves: [backend, notifications, mobile] }
-  impl-gemini:   { harness: opencode,    model: google/gemini-3-pro,   role: implementer, vendor: google,    concurrency: 2, waves: [contracts, ui, admin, mobile] }
+  impl-gemini:   { harness: antigravity, model: gemini-3.1-pro-high,   role: implementer, vendor: google,    concurrency: 2, waves: [contracts, ui, admin, mobile] }
   impl-glm:      { harness: glm,         model: glm-5.3,               role: implementer, vendor: zai,       concurrency: 1, waves: [contracts, admin] }
   impl-deepseek: { harness: opencode,    model: deepseek/<flagship>,   role: implementer, vendor: deepseek,  concurrency: 1, waves: [backend] }
   review-opus:   { harness: claude-code, model: claude-opus-5,         role: reviewer,    vendor: anthropic, concurrency: 1, waves: [] }
-  review-gemini: { harness: opencode,    model: google/gemini-3-pro,   role: reviewer,    vendor: google,    concurrency: 1, waves: [] }
-  fix-flash:     { harness: opencode,    model: google/gemini-3-flash, role: fixer,       vendor: google,    concurrency: 2, waves: [] }
+  review-gemini: { harness: antigravity, model: gemini-3.1-pro-high,   role: reviewer,    vendor: google,    concurrency: 1, waves: [] }
+  fix-flash:     { harness: antigravity, model: gemini-3.8-flash-medium, role: fixer,       vendor: google,    concurrency: 2, waves: [] }
 
 # Ordered: dispatch priority follows this list, then issue number.
 # Each becomes a wave:<name> label.

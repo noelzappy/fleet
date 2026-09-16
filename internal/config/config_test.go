@@ -34,7 +34,8 @@ func TestLoadExample(t *testing.T) {
 		{"project.root expands ~", f.Project.Root, filepath.Join(home, "fleet/widgets")},
 		{"machine.node", f.Machine.NodeVersion, "24"},
 		{"turbo team", f.Machine.TurboRemote.Team, "your-team"},
-		{"harness count", len(f.Harnesses), 3},
+		{"harness count", len(f.Harnesses), 4},
+		{"gemini profiles use antigravity", f.Harnesses[f.Profiles["impl-gemini"].Harness].Kind, "antigravity"},
 		{"glm env_file expands ~", f.Harnesses["glm"].EnvFile, filepath.Join(home, ".config/fleet/profiles/glm.env")},
 		{"glm env kept unexpanded", f.Harnesses["glm"].Env["ANTHROPIC_AUTH_TOKEN"], "${GLM_API_KEY}"},
 		{"profile count", len(f.Profiles), 7},
@@ -110,6 +111,7 @@ func TestValidate(t *testing.T) {
 				"rev":  {Harness: "cc", Role: "reviewer", Vendor: "google"},
 			},
 			Routing: Routing{CrossVendorReview: true},
+			Gate:    Gate{Timeout: "15m"},
 		}
 	}
 	tests := []struct {
@@ -119,6 +121,10 @@ func TestValidate(t *testing.T) {
 	}{
 		{"valid", func(*Fleet) {}, ""},
 		{"missing repo", func(f *Fleet) { f.Project.Repo = "" }, "project.repo"},
+		{"gemini-cli points at antigravity", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "gemini-cli"} }, "replaced by antigravity"},
+		{"unknown kind", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "codex"} }, "not one of"},
+		{"antigravity kind ok", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "antigravity"} }, ""},
+		{"bad gate timeout", func(f *Fleet) { f.Gate.Timeout = "soon" }, "gate.timeout"},
 		{"unknown harness", func(f *Fleet) { p := f.Profiles["impl"]; p.Harness = "nope"; f.Profiles["impl"] = p }, "unknown harness"},
 		{"missing vendor", func(f *Fleet) { p := f.Profiles["rev"]; p.Vendor = ""; f.Profiles["rev"] = p }, "vendor is required"},
 		{"same-vendor review", func(f *Fleet) { p := f.Profiles["rev"]; p.Vendor = "anthropic"; f.Profiles["rev"] = p }, "cross_vendor_review"},

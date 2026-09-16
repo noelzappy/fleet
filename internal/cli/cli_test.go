@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noelzappy/fleet/internal/config"
 )
@@ -100,4 +102,28 @@ func TestBootstrapSteps(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Every kind's gate invocation must survive hostile prompts and gates as literal words.
+func TestHarnessKindsGateRun(t *testing.T) {
+	for _, kind := range config.HarnessKinds {
+		k, ok := harnessKinds[kind]
+		if !ok {
+			t.Fatalf("config.HarnessKinds lists %q but cli has no entry", kind)
+		}
+		cmd := k.gateRun("Run `pnpm gate`; it's $HOME", "pnpm gate", 25*time.Minute)
+		if !strings.HasPrefix(cmd, k.bin+" ") && !strings.Contains(cmd, " "+k.bin+" ") {
+			t.Errorf("%s: invocation doesn't call %s: %s", kind, k.bin, cmd)
+		}
+		out, err := exec.Command("bash", "-c", "set -- "+cmd+`; printf '%s\n' "$@"`).Output()
+		if err != nil {
+			t.Fatalf("%s: bash could not parse %s: %v", kind, cmd, err)
+		}
+		if !strings.Contains(string(out), "Run `pnpm gate`; it's $HOME\n") {
+			t.Errorf("%s: prompt not passed as one literal word:\n%s", kind, out)
+		}
+	}
+	if len(harnessKinds) != len(config.HarnessKinds) {
+		t.Errorf("cli knows %d kinds, config allows %d", len(harnessKinds), len(config.HarnessKinds))
+	}
 }

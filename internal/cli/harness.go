@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/shell"
@@ -74,7 +75,9 @@ func harnessVerify(cmd *cobra.Command, _ []string) error {
 	if err := shell.Run(ctx, `cd `+root+` && git worktree add `+wt+` -b fleet/verify && cd `+wt+` && pnpm install --frozen-lockfile`, nil); err != nil {
 		return err
 	}
-	prompt := shell.Quote(fmt.Sprintf("Run `%s` in this directory. Print exactly PASS or FAIL as the last line.", cfg.Gate.Command))
+	prompt := fmt.Sprintf("Run `%s` in this directory. Print exactly PASS or FAIL as the last line.", cfg.Gate.Command)
+	gateTimeout, _ := time.ParseDuration(cfg.Gate.Timeout) // validated by config.Load
+	agentTimeout := gateTimeout + 10*time.Minute           // the agent reads, runs the gate, and reports
 	names := make([]string, 0, len(cfg.Harnesses))
 	for name := range cfg.Harnesses {
 		names = append(names, name)
@@ -82,20 +85,17 @@ func harnessVerify(cmd *cobra.Command, _ []string) error {
 	sort.Strings(names)
 	for _, name := range names {
 		h := cfg.Harnesses[name]
-		var invoke string
-		switch h.Kind {
-		case "claude-code":
-			invoke = fmt.Sprintf(`cd %s && claude -p %s --output-format text`, wt, prompt)
-		case "opencode":
-			invoke = fmt.Sprintf(`cd %s && opencode run %s`, wt, prompt)
-		case "gemini-cli":
-			invoke = fmt.Sprintf(`cd %s && gemini -p %s`, wt, prompt)
-		default:
-			fmt.Fprintf(os.Stderr, "verify %s: unknown kind %s\n", name, h.Kind)
-			continue
+		k, err := kindOf(h)
+		if err != nil {
+			return err
 		}
-		// TODO(implementer): confirm each CLI's headless flags on this box; capture output and parse last line.
-		out, err := shell.Output(ctx, invoke+` | tail -1`)
+		// pipefail: a failing agent must not be masked by tail's exit status.
+		invoke := "set -o pipefail; cd " + wt + " && "
+		if h.EnvFile != "" { // e.g. a claude-code harness pointed at another vendor's endpoint
+			invoke += ". " + shell.Quote(h.EnvFile) + " && "
+		}
+		invoke += k.gateRun(prompt, cfg.Gate.Command, agentTimeout) + " | tail -1"
+		out, err := shell.Output(ctx, invoke)
 		status := "FAIL"
 		switch {
 		case shell.DryRun:
