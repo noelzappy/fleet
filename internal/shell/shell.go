@@ -40,6 +40,17 @@ func Output(ctx context.Context, cmd string) (string, error) {
 	return strings.TrimSpace(string(b)), err
 }
 
+// Check runs cmd quietly and reports whether it exited 0. It is how idempotent steps
+// decide whether to act. Under --dry-run it prints cmd and reports false, so the
+// action that would follow is printed too.
+func Check(ctx context.Context, cmd string) bool {
+	if DryRun {
+		fmt.Fprintf(os.Stderr, "→ (check) %s\n", cmd)
+		return false
+	}
+	return exec.CommandContext(ctx, "bash", "-lc", cmd).Run() == nil
+}
+
 // Interactive is for commands that need a TTY (OAuth logins).
 func Interactive(ctx context.Context, cmd string) error {
 	fmt.Fprintf(os.Stderr, "→ (interactive) %s\n", cmd)

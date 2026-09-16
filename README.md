@@ -108,7 +108,23 @@ Every command is **idempotent**: running it again on a machine that's already se
 
 ## Install
 
-On the fleet box:
+### Prepare the box
+
+Most VPS images start with only `root`. `bootstrap` refuses to run as root, so create the user the fleet will run as and copy your SSH key to it:
+
+```bash
+# as root on a fresh Ubuntu 24.04 box
+adduser --disabled-password --gecos "" fleet
+usermod -aG sudo fleet
+echo 'fleet ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/fleet && chmod 440 /etc/sudoers.d/fleet
+rsync --archive --chown=fleet:fleet ~/.ssh /home/fleet
+```
+
+Then check that `ssh fleet@<host>` works from your laptop before going further. With `machine.firewall` on, bootstrap turns off password login (after checking that `~/.ssh/authorized_keys` exists).
+
+### Install the binary
+
+On the fleet box, as the fleet user:
 
 ```bash
 mkdir -p ~/.local/bin
@@ -139,6 +155,8 @@ fleet --dry-run orchestrator init
 
 # 3. On the fleet box, with fleet.yaml present
 fleet bootstrap                   # OS deps, docker, node/pnpm, gh, tailscale, firewall, dirs
+                                  # prints ✓ for steps already done; a second run changes nothing
+exec $SHELL -l                    # pick up node on PATH and docker group membership
 gh auth login
 git clone https://github.com/your-org/your-repo ~/fleet/your-repo   # = project.root
 $EDITOR ~/.config/fleet/env       # secrets, KEY=VALUE, chmod 600 (bootstrap creates it)
@@ -202,7 +220,7 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`.
 | Command | What it does | Runs on |
 |---|---|---|
 | `fleet init [--repo o/n]` | Scaffold `fleet.yaml`, `AGENTS.md`, issue template. Never overwrites. | anywhere |
-| `fleet bootstrap` | apt packages, docker, fnm + node, pnpm, gh, tailscale, ufw, SSH key-only, fleet dirs | box |
+| `fleet bootstrap` | apt packages, docker, fnm + node, pnpm, gh, tailscale, ufw, SSH key-only, fleet dirs. Each step checks first and re-checks after applying | box |
 | `fleet harness add <name>` | Run `install`, write `env_file`, run `smoke` | anywhere |
 | `fleet harness login <name>` | Run the interactive `login` (use tmux over SSH) | anywhere |
 | `fleet harness verify` | Throwaway worktree; every harness runs the gate headless; PASS/FAIL table | box |
