@@ -158,8 +158,8 @@ func TestJSONRows(t *testing.T) {
 
 func TestSlugAndPrefix(t *testing.T) {
 	for in, want := range map[string]string{
-		"[ADMIN] Wallet freeze/unfreeze":     "admin-wallet-freeze-unfreeze",
-		"  ":                                  "task",
+		"[ADMIN] Wallet freeze/unfreeze": "admin-wallet-freeze-unfreeze",
+		"  ":                             "task",
 		"A very long title that keeps going and going past forty characters": "a-very-long-title-that-keeps-going-and-g",
 	} {
 		if got := slug(in); got != want {
