@@ -156,6 +156,7 @@ Observe: every GitHub issue (closed ones decide dependencies), fleet's Multica i
 | Resume | escalation label removed by the owner, Multica still `blocked` | comment "unblocked, read the answer with gh" and set `todo` (starts a run) |
 | Gate | newest gate run on the PR failed, not yet reported | Multica comment `@profile` with the run and failed jobs (lint/typecheck-only failures go to a fixer when `fixer_only_lint`); `gate_nudged_run` prevents repeats |
 | Attempts | failed gate runs ≥ `max_gate_attempts` | `agent-stuck`, remove `agent-ready`, comment, cancel Multica runs |
+| Conflicts | PR is `CONFLICTING` with the base branch (another agent's PR merged first) | Multica comment `@profile` asking for a rebase; `conflict_nudged` (head sha) prevents repeats |
 | Cross-vendor review | open PR on a mirrored issue with no review issue yet | create a Multica review issue assigned to a reviewer of a different vendor; it posts one `gh pr review` whose body ends `Reviewed-by: <profile> (<vendor>)` |
 
 Enforcement of the review rule is the generated **`pr-contract`** GitHub check (`fleet github init`), a required status check: PR body has `Closes #N` and `Model: <profile>`, and at least one review carries `Reviewed-by` from a profile whose vendor differs. Humans still approve and merge.
@@ -165,7 +166,7 @@ Enforcement of the review rule is the generated **`pr-contract`** GitHub check (
 - **agy has no scoped allowlist**, and Multica runs every harness with permissions bypassed anyway. Accepted; the mitigation is the box: no production credentials, secrets rotated on `fleet panic`, Tailscale-only UI.
 - **Routing is not load-aware.** Spreading by issue number is deterministic and stateless; Multica queues per agent.
 - **`issue_dependency` in Multica is unused by fleet**: dependencies are enforced on the GitHub side before mirroring.
-- **Verification.** The planner is table-tested (`internal/fleetsync`), every command dry-runs, and the Multica CLI flags were read from the built CLI at `7e4758a`. Nothing has run against a live Multica yet; that happens in roadmap step 4 on the box.
+- **Verification.** The planner is table-tested (`internal/fleetsync`) and every command dry-runs. On 2026-09-17 the whole chain ran on a Mac against a live self-hosted Multica: bootstrap → harness verify → orchestrator init (headless login, agents) → github init → issues sync → sync ticks. Observed live: dispatch by wave with the dependency held back, both PRs on `agent/<n>-<slug>` with the body contract, gate nudge, an agent escalating with `needs-human` and clearing it after the fix, cross-vendor reviews with `Reviewed-by` making `pr-contract` green, a conflict after the first merge (which produced the rebase rule above).
 
 ## What changes in fleet (original analysis)
 

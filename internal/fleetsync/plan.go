@@ -29,6 +29,7 @@ const (
 	MetaPR       = "gh_pr"           // PR number (review)
 	MetaProfile  = "fleet_profile"   // profile the issue is assigned to
 	MetaNudgedID = "gate_nudged_run" // last gate run id the agent was told about
+	MetaConflict = "conflict_nudged" // head sha the agent was told conflicts with the base branch
 )
 
 const (
@@ -59,16 +60,19 @@ type MIssue struct {
 	PR          int    // gh_pr, reviews only
 	Profile     string // fleet_profile
 	NudgedRun   string // gate_nudged_run
+	Conflicted  string // conflict_nudged
 	LastComment string // newest comment body; filled only for blocked issues
 }
 
 // PR is an open pull request on a fleet branch (agent/<issue>-<slug>).
 type PR struct {
-	Number int
-	Head   string
-	Issue  int // parsed from Head; 0 if not a fleet branch
-	URL    string
-	Gate   []GateRun
+	Number      int
+	Head        string
+	HeadSHA     string
+	Issue       int // parsed from Head; 0 if not a fleet branch
+	URL         string
+	Conflicting bool // gh mergeable == CONFLICTING
+	Gate        []GateRun
 }
 
 // GateRun is one CI run of the gate workflow on a PR's branch, newest first.
@@ -87,7 +91,7 @@ type State struct {
 
 // Action is one thing to do. Exactly one field group is set.
 type Action struct {
-	Kind string // create-task | unblock | escalate | stuck | nudge | create-review
+	Kind string // create-task | unblock | escalate | stuck | nudge | rebase | create-review
 	// create-task / unblock / escalate / stuck / nudge
 	Issue   GHIssue
 	Multica MIssue // existing Multica issue (unblock, escalate, stuck, nudge, create-review)
@@ -110,6 +114,8 @@ func (a Action) String() string {
 		return fmt.Sprintf("stuck          #%d PR #%d +%s", a.Issue.Number, a.PR.Number, a.Label)
 	case "nudge":
 		return fmt.Sprintf("nudge          #%d PR #%d run %s → @%s", a.Issue.Number, a.PR.Number, a.Run.ID, a.Profile)
+	case "rebase":
+		return fmt.Sprintf("rebase         #%d PR #%d %s → @%s", a.Issue.Number, a.PR.Number, a.PR.HeadSHA, a.Profile)
 	case "create-review":
 		return fmt.Sprintf("create-review  PR #%d (#%d) → %s", a.PR.Number, a.Issue.Number, a.Profile)
 	}
@@ -178,6 +184,11 @@ func Plan(f *config.Fleet, st State) []Action {
 		is, open := byNum[pr.Issue]
 		if pr.Issue == 0 || !mirrored || !open || is.State != "OPEN" || has(is.Labels, L.Stuck) {
 			continue
+		}
+		// A conflicting PR can't merge and its gate is moot; tell the implementer once per head.
+		if pr.Conflicting && pr.HeadSHA != m.Conflicted {
+			out = append(out, Action{Kind: "rebase", Issue: is, Multica: m, PR: pr, Profile: m.Profile,
+				Comment: fmt.Sprintf("@%s PR %s conflicts with `%s`. Rebase onto `origin/%s`, resolve the conflicts, run `%s`, and force-push the branch.", m.Profile, pr.URL, f.Project.Branch, f.Project.Branch, f.Gate.Command)})
 		}
 		if len(pr.Gate) > 0 && pr.Gate[0].Conclusion == "failure" {
 			if failures(pr.Gate) >= f.Routing.MaxGateAttempts {

@@ -86,13 +86,14 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 		for _, row := range rows {
 			md, _ := row["metadata"].(map[string]any)
 			m := fleetsync.MIssue{
-				ID:        str(row["id"]),
-				Status:    str(row["status"]),
-				Kind:      str(md[fleetsync.MetaKind]),
-				Issue:     num(md[fleetsync.MetaIssue]),
-				PR:        num(md[fleetsync.MetaPR]),
-				Profile:   str(md[fleetsync.MetaProfile]),
-				NudgedRun: str(md[fleetsync.MetaNudgedID]),
+				ID:         str(row["id"]),
+				Status:     str(row["status"]),
+				Kind:       str(md[fleetsync.MetaKind]),
+				Issue:      num(md[fleetsync.MetaIssue]),
+				PR:         num(md[fleetsync.MetaPR]),
+				Profile:    str(md[fleetsync.MetaProfile]),
+				NudgedRun:  str(md[fleetsync.MetaNudgedID]),
+				Conflicted: str(md[fleetsync.MetaConflict]),
 			}
 			if m.Kind == fleetsync.KindTask && m.Status == fleetsync.StatusBlocked {
 				m.LastComment = lastComment(ctx, m.ID)
@@ -110,19 +111,20 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 		}
 	}
 
-	out, err = shell.Output(ctx, "gh pr list -R "+R+" --state open --limit 200 --json number,headRefName,url")
+	out, err = shell.Output(ctx, "gh pr list -R "+R+" --state open --limit 200 --json number,headRefName,headRefOid,url,mergeable")
 	if err != nil {
 		return st, fmt.Errorf("gh pr list: %w", err)
 	}
 	var prs []struct {
-		Number           int
-		HeadRefName, URL string
+		Number                                  int
+		HeadRefName, HeadRefOid, URL, Mergeable string
 	}
 	if err := decode(out, &prs); err != nil {
 		return st, fmt.Errorf("gh pr list: %w", err)
 	}
 	for _, p := range prs {
-		pr := fleetsync.PR{Number: p.Number, Head: p.HeadRefName, URL: p.URL, Issue: fleetsync.IssueFromBranch(p.HeadRefName)}
+		pr := fleetsync.PR{Number: p.Number, Head: p.HeadRefName, HeadSHA: p.HeadRefOid, URL: p.URL,
+			Issue: fleetsync.IssueFromBranch(p.HeadRefName), Conflicting: p.Mergeable == "CONFLICTING"}
 		if mirrored[pr.Issue] {
 			pr.Gate, err = gateRuns(ctx, pr.Head)
 			if err != nil {
@@ -225,6 +227,11 @@ func apply(ctx context.Context, a fleetsync.Action) error {
 			return err
 		}
 		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaNudgedID: a.Run.ID})
+	case "rebase":
+		if err := multicaComment(ctx, a.Multica.ID, a.Comment); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaConflict: a.PR.HeadSHA})
 	}
 	return fmt.Errorf("unknown action %q", a.Kind)
 }

@@ -22,6 +22,7 @@ func fleet() *config.Fleet {
 		},
 		Waves:   []config.Wave{{Name: "ui"}, {Name: "backend"}},
 		Routing: config.Routing{CrossVendorReview: true, MaxGateAttempts: 3, FixerOnlyLint: true},
+		Gate:    config.Gate{Command: "pnpm gate"},
 	}
 	f.ApplyDefaults()
 	return f
@@ -116,6 +117,15 @@ func TestPlan(t *testing.T) {
 			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
 				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
 				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, Gate: []GateRun{{ID: "r2", Conclusion: "success"}, {ID: "r1", Conclusion: "failure"}}}}}, nil},
+		{"conflicting PR gets one rebase nudge",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, HeadSHA: "abc", Conflicting: true}}},
+			[]string{"rebase         #1 PR #10 abc → @impl-g"}},
+		{"already told about this head: nothing",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g", Conflicted: "abc"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, HeadSHA: "abc", Conflicting: true}}}, nil},
 		{"PR on a non-fleet branch is ignored",
 			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
 				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}},

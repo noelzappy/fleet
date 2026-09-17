@@ -342,10 +342,10 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `--dry-run` for every command | implemented, checked |
 | `init` | implemented; not yet exercised end to end |
 | `status` | implemented; active sessions and spend per profile not yet shown |
-| `bootstrap` | Linux and macOS steps written and dry-run; not yet run on a real box |
-| `harness add/login/verify` | written; headless flags for each CLI unverified; OAuth-over-SSH steps not yet documented |
-| `orchestrator init/run` (Multica) | written against the Multica CLI built from source; not yet run against a live Multica |
-| `sync` | planner table-tested (26 cases); the observe/apply layer dry-runs but has not run against a live Multica |
+| `bootstrap` | macOS: ran for real, second run a no-op. Linux: written and dry-run only |
+| `harness add/login/verify` | `verify` ran for real on macOS: all three CLIs ran the gate headless and reported PASS |
+| `orchestrator init/run` (Multica) | ran end to end on macOS (headless login, workspace, repo, agents, LaunchAgents); not yet on Linux |
+| `sync` | planner table-tested (28 cases); ran live against a self-hosted Multica on macOS: dispatch, dependency hold, review, nudge, escalate, rebase |
 | `github init` | labels, `pr-contract` check and notify workflow; GitHub App manifest flow not implemented |
 | `issues sync` | implemented; not yet run against a live repo |
 | `up/pause/resume/kill/panic` | written; not yet verified on a box |
