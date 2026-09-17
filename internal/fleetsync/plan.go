@@ -23,13 +23,15 @@ import (
 // Metadata keys fleet sets on Multica issues. They are the only state fleet keeps,
 // and they live in Multica, so fleet itself stays stateless between ticks.
 const (
-	MetaRepo     = "fleet_repo"      // owner/name this issue mirrors
-	MetaKind     = "fleet_kind"      // task | review
-	MetaIssue    = "gh_issue"        // GitHub issue number (task) or the PR's issue (review)
-	MetaPR       = "gh_pr"           // PR number (review)
-	MetaProfile  = "fleet_profile"   // profile the issue is assigned to
-	MetaNudgedID = "gate_nudged_run" // last gate run id the agent was told about
-	MetaConflict = "conflict_nudged" // head sha the agent was told conflicts with the base branch
+	MetaRepo     = "fleet_repo"         // owner/name this issue mirrors
+	MetaKind     = "fleet_kind"         // task | review
+	MetaIssue    = "gh_issue"           // GitHub issue number (task) or the PR's issue (review)
+	MetaPR       = "gh_pr"              // PR number (review)
+	MetaProfile  = "fleet_profile"      // profile the issue is assigned to
+	MetaNudgedID = "gate_nudged_run"    // last gate run id the agent was told about
+	MetaConflict = "conflict_nudged"    // head sha the agent was told conflicts with the base branch
+	MetaAttrib   = "attribution_nudged" // head sha the agent was told carries an attribution trailer
+	MetaBody     = "body_nudged"        // PR number the agent was told has a non-conforming body
 )
 
 const (
@@ -61,6 +63,8 @@ type MIssue struct {
 	Profile     string // fleet_profile
 	NudgedRun   string // gate_nudged_run
 	Conflicted  string // conflict_nudged
+	Attributed  string // attribution_nudged
+	BodyNudged  int    // body_nudged
 	LastComment string // newest comment body; filled only for blocked issues
 }
 
@@ -71,7 +75,9 @@ type PR struct {
 	HeadSHA     string
 	Issue       int // parsed from Head; 0 if not a fleet branch
 	URL         string
-	Conflicting bool // gh mergeable == CONFLICTING
+	Conflicting bool     // gh mergeable == CONFLICTING
+	Attribution []string // commit-message lines that attribute a commit to an agent or tool
+	BodyErrors  []string // what the PR body is missing (Closes #N, Model: line)
 	Gate        []GateRun
 }
 
@@ -116,6 +122,10 @@ func (a Action) String() string {
 		return fmt.Sprintf("nudge          #%d PR #%d run %s → @%s", a.Issue.Number, a.PR.Number, a.Run.ID, a.Profile)
 	case "rebase":
 		return fmt.Sprintf("rebase         #%d PR #%d %s → @%s", a.Issue.Number, a.PR.Number, a.PR.HeadSHA, a.Profile)
+	case "fix-body":
+		return fmt.Sprintf("fix-body       #%d PR #%d → @%s", a.Issue.Number, a.PR.Number, a.Profile)
+	case "strip-attribution":
+		return fmt.Sprintf("strip-attrib   #%d PR #%d %s → @%s", a.Issue.Number, a.PR.Number, a.PR.HeadSHA, a.Profile)
 	case "create-review":
 		return fmt.Sprintf("create-review  PR #%d (#%d) → %s", a.PR.Number, a.Issue.Number, a.Profile)
 	}
@@ -189,6 +199,19 @@ func Plan(f *config.Fleet, st State) []Action {
 		is, open := byNum[pr.Issue]
 		if pr.Issue == 0 || !mirrored || !open || is.State != "OPEN" || has(is.Labels, L.Stuck) {
 			continue
+		}
+		// The PR body contract (Closes #N, Model: <profile>) is what pr-contract and the
+		// reviewer key off; tell the implementer once per PR.
+		if len(pr.BodyErrors) > 0 && pr.Number != m.BodyNudged {
+			out = append(out, Action{Kind: "fix-body", Issue: is, Multica: m, PR: pr, Profile: m.Profile,
+				Comment: fmt.Sprintf("@%s The body of PR %s doesn't follow the PR contract in AGENTS.md: %s. Edit the PR body (`gh pr edit %d --body-file -`) to include `Closes #%d`, the sections What / AC→tests / Scope check / Not done, and the line `Model: %s`.",
+					m.Profile, pr.URL, strings.Join(pr.BodyErrors, "; "), pr.Number, is.Number, m.Profile)})
+		}
+		// Commits are the owner's: an attribution trailer blocks merge (pr-contract), so
+		// tell the implementer once per head to amend it away.
+		if len(pr.Attribution) > 0 && pr.HeadSHA != m.Attributed {
+			out = append(out, Action{Kind: "strip-attribution", Issue: is, Multica: m, PR: pr, Profile: m.Profile,
+				Comment: fmt.Sprintf("@%s Commits on PR %s carry attribution lines that are not allowed (commits are the owner's; see AGENTS.md):\n%s\nRemove them (`git commit --amend`, `git rebase -i` for older commits), make sure no hook re-adds them, and force-push.", m.Profile, pr.URL, "  "+strings.Join(pr.Attribution, "\n  "))})
 		}
 		// A conflicting PR can't merge and its gate is moot; tell the implementer once per head.
 		if pr.Conflicting && pr.HeadSHA != m.Conflicted {
@@ -384,4 +407,44 @@ func contains(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+var attributionLine = regexp.MustCompile(`(?im)^(co-authored-by|signed-off-by):.*(agent|bot|claude|gemini|gpt|codex|opencode|multica|anthropic|google|openai)|generated with|claude-session`)
+
+// AttributionLines returns the lines of a commit message that attribute it to an
+// agent, bot, model or tool. Mirrors the pr-contract check.
+func AttributionLines(message string) []string {
+	var out []string
+	for _, line := range strings.Split(message, "\n") {
+		if attributionLine.MatchString(line) {
+			out = append(out, strings.TrimSpace(line))
+		}
+	}
+	return out
+}
+
+var (
+	closesRef = regexp.MustCompile(`(?i)\bcloses #(\d+)`)
+	modelLine = regexp.MustCompile(`(?m)^Model: *([A-Za-z0-9_-]+)`)
+)
+
+// BodyErrors checks a PR body against the contract: it must close its issue and
+// name the implementing profile. Mirrors the pr-contract check.
+func BodyErrors(body string, issue int, profile string) []string {
+	var errs []string
+	ok := false
+	for _, m := range closesRef.FindAllStringSubmatch(body, -1) {
+		if n, _ := strconv.Atoi(m[1]); n == issue {
+			ok = true
+		}
+	}
+	if !ok {
+		errs = append(errs, fmt.Sprintf("missing `Closes #%d`", issue))
+	}
+	if m := modelLine.FindStringSubmatch(body); m == nil {
+		errs = append(errs, "missing `Model: <profile>` line")
+	} else if profile != "" && m[1] != profile {
+		errs = append(errs, fmt.Sprintf("`Model: %s` should be `Model: %s`", m[1], profile))
+	}
+	return errs
 }

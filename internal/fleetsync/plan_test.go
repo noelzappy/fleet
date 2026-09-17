@@ -122,6 +122,24 @@ func TestPlan(t *testing.T) {
 			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
 				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
 				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, Gate: []GateRun{{ID: "r2", Conclusion: "success"}, {ID: "r1", Conclusion: "failure"}}}}}, nil},
+		{"non-conforming PR body gets one fix nudge",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, HeadSHA: "abc", BodyErrors: []string{"missing `Closes #1`"}}}},
+			[]string{"fix-body       #1 PR #10 → @impl-g"}},
+		{"body already reported: nothing",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g", BodyNudged: 10}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, HeadSHA: "abc", BodyErrors: []string{"x"}}}}, nil},
+		{"attribution trailer gets one strip nudge",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, HeadSHA: "abc", Attribution: []string{"Co-authored-by: multica-agent <github@multica.ai>"}}}},
+			[]string{"strip-attrib   #1 PR #10 abc → @impl-g"}},
+		{"attribution already reported for this head: nothing",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g", Attributed: "abc"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1, HeadSHA: "abc", Attribution: []string{"Co-authored-by: x-agent <a@b>"}}}}, nil},
 		{"conflicting PR gets one rebase nudge",
 			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
 				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Profile: "impl-g"}, {ID: "m2", Kind: "review", Issue: 1, PR: 10}},
@@ -200,5 +218,30 @@ func TestEscalationFor(t *testing.T) {
 	}
 	if label, _ := escalationFor("", L); label != "needs-human" {
 		t.Errorf("default label %s", label)
+	}
+}
+
+func TestAttributionLines(t *testing.T) {
+	msg := "feat: x [#1]\n\nCloses #1\n\nCo-authored-by: multica-agent <github@multica.ai>\nSigned-off-by: Emmanuel Yeboah <e@x>\n🤖 Generated with Claude Code\nClaude-Session: https://x"
+	got := AttributionLines(msg)
+	want := []string{"Co-authored-by: multica-agent <github@multica.ai>", "🤖 Generated with Claude Code", "Claude-Session: https://x"}
+	if reflect.DeepEqual(got, want) == false {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if AttributionLines("feat: plain\n\nCo-authored-by: Jane Doe <jane@example.com>") != nil {
+		t.Error("human co-author flagged")
+	}
+}
+
+func TestBodyErrors(t *testing.T) {
+	if got := BodyErrors("Closes #3\n\n## What\n\nModel: impl-g", 3, "impl-g"); got != nil {
+		t.Errorf("conforming body: %v", got)
+	}
+	got := BodyErrors("Adds greetAll.\n\nModel: impl-a", 3, "impl-g")
+	if len(got) != 2 || !strings.Contains(got[0], "Closes #3") || !strings.Contains(got[1], "should be `Model: impl-g`") {
+		t.Errorf("got %v", got)
+	}
+	if got := BodyErrors("closes #3 and fixes it", 3, ""); len(got) != 1 || !strings.Contains(got[0], "Model") {
+		t.Errorf("got %v", got)
 	}
 }

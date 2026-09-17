@@ -94,6 +94,8 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 				Profile:    str(md[fleetsync.MetaProfile]),
 				NudgedRun:  str(md[fleetsync.MetaNudgedID]),
 				Conflicted: str(md[fleetsync.MetaConflict]),
+				Attributed: str(md[fleetsync.MetaAttrib]),
+				BodyNudged: num(md[fleetsync.MetaBody]),
 			}
 			if m.Kind == fleetsync.KindTask && m.Status == fleetsync.StatusBlocked {
 				m.LastComment = lastComment(ctx, m.ID)
@@ -105,19 +107,21 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 		}
 	}
 	mirrored := map[int]bool{}
+	taskProfile := map[int]string{}
 	for _, m := range st.Multica {
-		if m.Kind == fleetsync.KindTask {
+		if m.Kind == fleetsync.KindTask && m.Status != fleetsync.StatusCancelled {
 			mirrored[m.Issue] = true
+			taskProfile[m.Issue] = m.Profile
 		}
 	}
 
-	out, err = shell.Output(ctx, "gh pr list -R "+R+" --state open --limit 200 --json number,headRefName,headRefOid,url,mergeable")
+	out, err = shell.Output(ctx, "gh pr list -R "+R+" --state open --limit 200 --json number,headRefName,headRefOid,url,mergeable,body")
 	if err != nil {
 		return st, fmt.Errorf("gh pr list: %w", err)
 	}
 	var prs []struct {
-		Number                                  int
-		HeadRefName, HeadRefOid, URL, Mergeable string
+		Number                                        int
+		HeadRefName, HeadRefOid, URL, Mergeable, Body string
 	}
 	if err := decode(out, &prs); err != nil {
 		return st, fmt.Errorf("gh pr list: %w", err)
@@ -130,6 +134,12 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 			if err != nil {
 				return st, err
 			}
+			msgs, err := shell.Output(ctx, fmt.Sprintf("gh api repos/%s/pulls/%d/commits --paginate -q '.[].commit.message'", shell.Quote(cfg.Project.Repo), pr.Number))
+			if err != nil {
+				return st, fmt.Errorf("gh api pulls/%d/commits: %w", pr.Number, err)
+			}
+			pr.Attribution = fleetsync.AttributionLines(msgs)
+			pr.BodyErrors = fleetsync.BodyErrors(p.Body, pr.Issue, taskProfile[pr.Issue])
 		}
 		st.PRs = append(st.PRs, pr)
 	}
@@ -232,6 +242,16 @@ func apply(ctx context.Context, a fleetsync.Action) error {
 			return err
 		}
 		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaConflict: a.PR.HeadSHA})
+	case "strip-attribution":
+		if err := multicaComment(ctx, a.Multica.ID, a.Comment); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaAttrib: a.PR.HeadSHA})
+	case "fix-body":
+		if err := multicaComment(ctx, a.Multica.ID, a.Comment); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaBody: strconv.Itoa(a.PR.Number)})
 	}
 	return fmt.Errorf("unknown action %q", a.Kind)
 }
