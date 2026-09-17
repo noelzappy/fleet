@@ -117,6 +117,8 @@ func (Linux) IsActiveCmd(job string) string {
 	return "systemctl --user is-active " + quote(job) + " || true"
 }
 
+func (Linux) ProfileFiles() []string { return []string{"~/.profile"} }
+
 func (Linux) ActiveCheck(job string) string {
 	return "systemctl --user is-active --quiet " + quote(job)
 }

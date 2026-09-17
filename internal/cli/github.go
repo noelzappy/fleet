@@ -15,8 +15,8 @@ import (
 
 // fleet github init — labels, notify workflow, secrets check, App guidance.
 func githubCmd() *cobra.Command {
-	c := &cobra.Command{Use: "github", Short: "Labels, notify workflow, App wiring"}
-	c.AddCommand(&cobra.Command{Use: "init", RunE: githubInit})
+	c := &cobra.Command{Use: "github", Short: "Labels, workflows, and the GitHub App agents authenticate with"}
+	c.AddCommand(&cobra.Command{Use: "init", Short: "labels, pr-contract check, notify workflow", RunE: githubInit}, githubAppCmd(), githubTokenCmd())
 	return c
 }
 
@@ -67,8 +67,8 @@ func githubInit(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "commit", dst, "via a PR")
 		fmt.Fprintf(os.Stderr, "ensure repo secrets exist: %s, %s\n", cfg.Notify.Telegram.TokenSecret, cfg.Notify.Telegram.ChatSecret)
 	}
-	fmt.Fprintln(os.Stderr, `GitHub App — TODO(implementer): App Manifest flow.
-  Permissions: contents:write, pull_requests:write, issues:write, metadata:read, checks:read.
-  NO administration, NO workflows. Store app id (env) + pem path in fleet.yaml.github.`)
+	if cfg.GitHub.Auth != "app" {
+		fmt.Fprintln(os.Stderr, "github.auth is gh: agents use this box's gh login. Before a client repo: set github.auth: app, then fleet github app create && fleet github app use")
+	}
 	return nil
 }

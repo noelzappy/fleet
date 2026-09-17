@@ -55,6 +55,13 @@ func printStatus(ctx context.Context, w io.Writer) error {
 	fmt.Fprintf(w, "ready: %s   stuck: %s   open PRs: %s\n", count(L.Ready), count(L.Stuck), prs)
 	fmt.Fprintf(w, "needs-human: %s   needs-resource: %s   needs-contract: %s\n",
 		count(L.NeedsHuman), count(L.NeedsResource), count(L.NeedsContract))
+	if cfg.GitHub.Auth == "app" {
+		if err := requireAppIsolation(ctx); err != nil {
+			fmt.Fprintf(w, "github: UNSAFE — %v\n", err)
+		}
+	} else {
+		fmt.Fprintln(w, "github: personal gh login (scratch repos only; github.auth: app before client code)")
+	}
 	if out := signedOut(ctx, cfg.Harnesses); len(out) > 0 {
 		var names []string
 		for _, n := range sortedHarnessNames() {

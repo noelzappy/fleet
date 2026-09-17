@@ -92,6 +92,8 @@ func TestApplyDefaults(t *testing.T) {
 		{"max gate attempts", Fleet{}, func(f *Fleet) (any, any) { return f.Routing.MaxGateAttempts, 3 }},
 		{"orchestrator kind", Fleet{}, func(f *Fleet) (any, any) { return f.Orchestrator.Kind, "multica" }},
 		{"service name follows kind", Fleet{}, func(f *Fleet) (any, any) { return f.Orchestrator.ServiceName, "fleet-multica" }},
+		{"github.auth defaults to gh", Fleet{}, func(f *Fleet) (any, any) { return f.GitHub.Auth, "gh" }},
+		{"app slug from project", Fleet{Project: Project{Name: "x"}}, func(f *Fleet) (any, any) { return f.GitHub.AppSlug, "x-fleet" }},
 		{"workspace follows project", Fleet{Project: Project{Name: "x"}}, func(f *Fleet) (any, any) { return f.Orchestrator.Workspace, "x" }},
 		{"custom label kept", Fleet{Labels: Labels{Stuck: "halp"}}, func(f *Fleet) (any, any) { return f.Labels.Stuck, "halp" }},
 	}
@@ -119,6 +121,7 @@ func TestValidate(t *testing.T) {
 			Routing:      Routing{CrossVendorReview: true},
 			Gate:         Gate{Timeout: "15m"},
 			Orchestrator: Orchestrator{Kind: "multica", SyncInterval: "2m"},
+			GitHub:       GitHub{Auth: "gh"},
 			Waves:        []Wave{{Name: "ui"}},
 		}
 	}
@@ -135,6 +138,8 @@ func TestValidate(t *testing.T) {
 		{"codex kind ok", func(f *Fleet) { f.Harnesses["cc"] = Harness{Kind: "codex"} }, ""},
 		{"bad gate timeout", func(f *Fleet) { f.Gate.Timeout = "soon" }, "gate.timeout"},
 		{"ao no longer supported", func(f *Fleet) { f.Orchestrator.Kind = "ao" }, "only multica"},
+		{"github.auth app ok", func(f *Fleet) { f.GitHub.Auth = "app" }, ""},
+		{"bad github.auth", func(f *Fleet) { f.GitHub.Auth = "pat" }, "github.auth"},
 		{"bad sync interval", func(f *Fleet) { f.Orchestrator.SyncInterval = "often" }, "sync_interval"},
 		{"bad role", func(f *Fleet) { p := f.Profiles["impl"]; p.Role = "coder"; f.Profiles["impl"] = p }, "must be implementer"},
 		{"unknown wave", func(f *Fleet) { p := f.Profiles["impl"]; p.Waves = []string{"nope"}; f.Profiles["impl"] = p }, "not in waves"},

@@ -154,6 +154,8 @@ func (Darwin) IsActiveCmd(job string) string {
 	return fmt.Sprintf(`if launchctl print gui/$(id -u)/%s 2>/dev/null | grep -q 'state = running'; then echo active; elif launchctl print gui/$(id -u)/%s >/dev/null 2>&1; then echo loaded; else echo inactive; fi`, job, job)
 }
 
+func (Darwin) ProfileFiles() []string { return []string{"~/.bash_profile", "~/.zprofile"} }
+
 func (Darwin) ActiveCheck(job string) string {
 	return fmt.Sprintf("launchctl print gui/$(id -u)/%s >/dev/null 2>&1", job)
 }

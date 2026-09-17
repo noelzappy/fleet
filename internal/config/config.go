@@ -105,8 +105,12 @@ type Orchestrator struct {
 }
 
 type GitHub struct {
-	AppSlug        string   `yaml:"app_slug"`
-	AppIDEnv       string   `yaml:"app_id_env"`
+	// Auth is how agents and fleet reach GitHub: "gh" uses the box's gh login (a personal
+	// account, fine for a scratch repo); "app" uses short-lived tokens from a GitHub App
+	// with no administration or workflows permission. Default gh.
+	Auth           string   `yaml:"auth"`
+	AppSlug        string   `yaml:"app_slug"`   // name for the App that `fleet github app create` registers
+	AppIDEnv       string   `yaml:"app_id_env"` // deprecated: unused, the App's ids live in ~/.config/fleet/gh-app.json
 	PrivateKeyPath string   `yaml:"private_key_path"`
 	RequiredChecks []string `yaml:"required_checks"`
 }
@@ -173,7 +177,6 @@ func (f *Fleet) ApplyDefaults() {
 		f.Project.Root = filepath.Join("~", "fleet", f.Project.Name)
 	}
 	f.Project.Root = ExpandPath(f.Project.Root)
-	f.GitHub.PrivateKeyPath = ExpandPath(f.GitHub.PrivateKeyPath)
 	for name, h := range f.Harnesses {
 		h.EnvFile = ExpandPath(h.EnvFile)
 		f.Harnesses[name] = h
@@ -187,6 +190,16 @@ func (f *Fleet) ApplyDefaults() {
 	if f.Gate.Timeout == "" {
 		f.Gate.Timeout = "15m"
 	}
+	if f.GitHub.Auth == "" {
+		f.GitHub.Auth = "gh"
+	}
+	if f.GitHub.AppSlug == "" {
+		f.GitHub.AppSlug = f.Project.Name + "-fleet"
+	}
+	if f.GitHub.PrivateKeyPath == "" {
+		f.GitHub.PrivateKeyPath = "~/.config/fleet/gh-app.pem"
+	}
+	f.GitHub.PrivateKeyPath = ExpandPath(f.GitHub.PrivateKeyPath)
 	if f.Gate.Workflow == "" {
 		f.Gate.Workflow = "gate"
 	}
@@ -245,6 +258,9 @@ func (f *Fleet) validate() error {
 	}
 	if _, err := time.ParseDuration(f.Gate.Timeout); err != nil {
 		return fmt.Errorf("gate.timeout: %w", err)
+	}
+	if f.GitHub.Auth != "gh" && f.GitHub.Auth != "app" {
+		return fmt.Errorf("github.auth %q: must be gh or app", f.GitHub.Auth)
 	}
 	if f.Orchestrator.Kind != "multica" {
 		return fmt.Errorf("orchestrator.kind %q: only multica is supported (docs/orchestrator-decision.md)", f.Orchestrator.Kind)

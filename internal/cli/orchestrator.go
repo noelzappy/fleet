@@ -138,6 +138,9 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	}); err != nil {
 		return err
 	}
+	if err := requireAppIsolation(ctx); err != nil {
+		return err
+	}
 	if err := ensureWorkspace(ctx); err != nil {
 		return err
 	}

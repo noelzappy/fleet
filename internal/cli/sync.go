@@ -25,6 +25,9 @@ func syncCmd() *cobra.Command {
 		Short: "one tick: mirror eligible GitHub issues into Multica, Multica state back as labels",
 		RunE: func(*cobra.Command, []string) error {
 			ctx := context.Background()
+			if err := requireAppIsolation(ctx); err != nil {
+				return fmt.Errorf("sync refused: %w", err)
+			}
 			st, err := observe(ctx)
 			if err != nil {
 				return err

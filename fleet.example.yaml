@@ -96,8 +96,8 @@ orchestrator:
   owner_email: you@example.com    # lets orchestrator init sign the CLI in with no browser; also restricts Multica sign-up to it
 
 github:
-  app_slug: widgets-fleet
-  app_id_env: FLEET_GH_APP_ID
+  auth: app                     # app: agents use a scoped GitHub App (fleet github app create/use); gh: the box's personal login, scratch repos only
+  app_slug: widgets-fleet       # name of the App fleet registers
   private_key_path: ~/.config/fleet/gh-app.pem
   required_checks: [gate, pr-contract]
 

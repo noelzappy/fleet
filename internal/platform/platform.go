@@ -61,6 +61,9 @@ type Platform interface {
 	IsActiveCmd(job string) string
 	// ActiveCheck exits 0 iff the job is running (or, for the timer, loaded).
 	ActiveCheck(job string) string
+	// ProfileFiles are the login-shell profiles fleet adds PATH blocks to; every fleet
+	// command, service and agent runs through `bash -lc`, which reads the first.
+	ProfileFiles() []string
 }
 
 // Current returns the platform for runtime.GOOS, or an error on unsupported OSes.

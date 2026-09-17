@@ -15,8 +15,18 @@ import (
 
 var DryRun bool
 
+// Quiet suppresses the "→ command" trace on stderr. `fleet github token` sets it: git and
+// every gh call through the wrapper run it, and the trace would land in agent output.
+var Quiet bool
+
+func trace(format string, a ...any) {
+	if !Quiet {
+		fmt.Fprintf(os.Stderr, format, a...)
+	}
+}
+
 func Run(ctx context.Context, cmd string, env map[string]string) error {
-	fmt.Fprintf(os.Stderr, "→ %s\n", cmd)
+	trace("→ %s\n", cmd)
 	if DryRun {
 		return nil
 	}
@@ -30,7 +40,7 @@ func Run(ctx context.Context, cmd string, env map[string]string) error {
 }
 
 func Output(ctx context.Context, cmd string) (string, error) {
-	fmt.Fprintf(os.Stderr, "→ %s\n", cmd)
+	trace("→ %s\n", cmd)
 	if DryRun {
 		return "", nil
 	}
@@ -43,7 +53,7 @@ func Output(ctx context.Context, cmd string) (string, error) {
 // OutputInput is Output with stdin supplied, for commands that read a body from
 // stdin (issue descriptions, comments) so it never touches the argv or shell history.
 func OutputInput(ctx context.Context, cmd, stdin string) (string, error) {
-	fmt.Fprintf(os.Stderr, "→ %s  <<(%d bytes on stdin)\n", cmd, len(stdin))
+	trace("→ %s  <<(%d bytes on stdin)\n", cmd, len(stdin))
 	if DryRun {
 		return "", nil
 	}
@@ -59,7 +69,7 @@ func OutputInput(ctx context.Context, cmd, stdin string) (string, error) {
 // action that would follow is printed too.
 func Check(ctx context.Context, cmd string) bool {
 	if DryRun {
-		fmt.Fprintf(os.Stderr, "→ (check) %s\n", cmd)
+		trace("→ (check) %s\n", cmd)
 		return false
 	}
 	return exec.CommandContext(ctx, "bash", "-lc", cmd).Run() == nil
@@ -67,7 +77,7 @@ func Check(ctx context.Context, cmd string) bool {
 
 // Interactive is for commands that need a TTY (OAuth logins).
 func Interactive(ctx context.Context, cmd string) error {
-	fmt.Fprintf(os.Stderr, "→ (interactive) %s\n", cmd)
+	trace("→ (interactive) %s\n", cmd)
 	if DryRun {
 		return nil
 	}
@@ -79,7 +89,7 @@ func Interactive(ctx context.Context, cmd string) error {
 // WriteFile is the only way the CLI writes files, so --dry-run covers writes as well as
 // commands. Parent directories are created.
 func WriteFile(path string, data []byte, perm os.FileMode) error {
-	fmt.Fprintf(os.Stderr, "→ write %s (%04o, %d bytes)\n", path, perm, len(data))
+	trace("→ write %s (%04o, %d bytes)\n", path, perm, len(data))
 	if DryRun {
 		return nil
 	}
