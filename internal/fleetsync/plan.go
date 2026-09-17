@@ -131,6 +131,8 @@ func (a Action) String() string {
 		return fmt.Sprintf("rebase         #%d PR #%d %s → @%s", a.Issue.Number, a.PR.Number, a.PR.HeadSHA, a.Profile)
 	case "rerun":
 		return fmt.Sprintf("rerun          %s %s (run %s cancelled by server)", a.Multica.Kind, a.Multica.ID, a.Multica.LastRunID)
+	case "close":
+		return fmt.Sprintf("close          %s %s (%s)", a.Multica.Kind, a.Multica.ID, a.Comment)
 	case "fix-body":
 		return fmt.Sprintf("fix-body       #%d PR #%d → @%s", a.Issue.Number, a.PR.Number, a.Profile)
 	case "strip-attribution":
@@ -198,6 +200,28 @@ func Plan(f *config.Fleet, st State) []Action {
 			}
 		case m.Status == StatusBlocked:
 			out = append(out, Action{Kind: "unblock", Issue: is, Multica: m})
+		}
+	}
+
+	// Closure flows back: a task whose GitHub issue closed, or a review whose PR is no
+	// longer open, is done in Multica too, so its board and `fleet status` stay truthful.
+	openPRs := map[int]bool{}
+	for _, pr := range st.PRs {
+		openPRs[pr.Number] = true
+	}
+	for _, m := range st.Multica {
+		if m.Status == StatusDone || m.Status == StatusCancelled {
+			continue
+		}
+		switch m.Kind {
+		case KindTask:
+			if is, ok := byNum[m.Issue]; ok && is.State == "CLOSED" {
+				out = append(out, Action{Kind: "close", Issue: is, Multica: m, Comment: fmt.Sprintf("GitHub #%d closed", m.Issue)})
+			}
+		case KindReview:
+			if m.PR != 0 && !openPRs[m.PR] {
+				out = append(out, Action{Kind: "close", Issue: byNum[m.Issue], Multica: m, Comment: fmt.Sprintf("PR #%d no longer open", m.PR)})
+			}
 		}
 	}
 

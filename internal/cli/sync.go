@@ -281,6 +281,8 @@ func apply(ctx context.Context, a fleetsync.Action) error {
 			return err
 		}
 		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaRerun: a.Multica.LastRunID})
+	case "close":
+		return shell.Run(ctx, multica+" issue status "+shell.Quote(a.Multica.ID)+" done --no-start >/dev/null", nil)
 	case "fix-body":
 		if err := multicaComment(ctx, a.Multica.ID, a.Comment); err != nil {
 			return err

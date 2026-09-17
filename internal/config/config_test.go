@@ -34,10 +34,9 @@ func TestLoadExample(t *testing.T) {
 		{"project.root expands ~", f.Project.Root, filepath.Join(home, "fleet/widgets")},
 		{"machine.node", f.Machine.NodeVersion, "24"},
 		{"turbo team", f.Machine.TurboRemote.Team, "your-team"},
-		{"harness count", len(f.Harnesses), 4},
+		{"harness count", len(f.Harnesses), 3},
 		{"gemini profiles use antigravity", f.Harnesses[f.Profiles["impl-gemini"].Harness].Kind, "antigravity"},
-		{"glm env_file expands ~", f.Harnesses["glm"].EnvFile, filepath.Join(home, ".config/fleet/profiles/glm.env")},
-		{"glm env kept unexpanded", f.Harnesses["glm"].Env["ANTHROPIC_AUTH_TOKEN"], "${GLM_API_KEY}"},
+		{"glm runs through opencode", f.Profiles["impl-glm"].Harness, "opencode"},
 		{"profile count", len(f.Profiles), 7},
 		{"impl-gemini waves", f.Profiles["impl-gemini"].Waves, []string{"contracts", "ui", "admin", "mobile"}},
 		{"wave order", f.Waves[0].Name, "contracts"},
@@ -313,5 +312,31 @@ func TestVersions(t *testing.T) {
 		if _, err := ParseVersion(bad); err == nil {
 			t.Errorf("ParseVersion(%q) should fail", bad)
 		}
+	}
+}
+
+func TestLoadHarnessEnv(t *testing.T) {
+	home := fakeHome(t)
+	path := filepath.Join(t.TempDir(), "fleet.yaml")
+	yml := `version: 1
+project: { name: p, repo: o/p }
+harnesses:
+  proxy:
+    kind: claude-code
+    env_file: ~/.config/fleet/profiles/proxy.env
+    env: { ANTHROPIC_AUTH_TOKEN: "${PROXY_KEY}" }
+`
+	if err := os.WriteFile(path, []byte(yml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.Harnesses["proxy"].EnvFile, filepath.Join(home, ".config/fleet/profiles/proxy.env"); got != want {
+		t.Errorf("env_file = %s, want %s", got, want)
+	}
+	if got := f.Harnesses["proxy"].Env["ANTHROPIC_AUTH_TOKEN"]; got != "${PROXY_KEY}" {
+		t.Errorf("env expanded at load time: %s", got)
 	}
 }

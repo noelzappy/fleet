@@ -52,7 +52,7 @@ The fleet box is Linux; you'll probably develop on something else.
 Use a disposable VPS you can reinstall. `bootstrap` changes the firewall and SSH config.
 
 ```bash
-make deploy VPS=user@host     # cross-compile linux/amd64, scp to ~/.local/bin/fleet, print version
+make deploy VPS=user@host     # cross-compile linux/amd64, upload beside ~/.local/bin/fleet and rename over it (safe while the daemon runs)
 make install                  # on a Mac that is itself the box
 ssh user@host 'cd ~/proj && fleet --dry-run bootstrap && fleet bootstrap'
 ssh user@host 'cd ~/proj && fleet bootstrap'   # second run must change nothing
@@ -72,8 +72,8 @@ Each step: implement → `make test` → run it for real (locally or on a box) �
 
 1. ~~`config`: `${VAR}` expansion, `ApplyDefaults`, tests, Linux guard~~
 2. ~~`bootstrap` on a fresh Ubuntu 24.04 box and on a Mac; the second run is a no-op~~
-3. ~~`harness add/login/verify`: every harness runs the gate headless in a worktree~~ (still to document: OAuth-over-SSH login steps)
-4. orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` against a live Multica on the box; `sync` end to end (create → escalate → unblock → review → nudge → stuck); dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
+3. ~~`harness add/login/verify`: every harness runs the gate headless in a worktree; document sign-in over SSH~~
+4. ~~orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` against a live Multica on the box; `sync` end to end; dashboard reachable over Tailscale only~~ (still to check on Linux: `pause --hard` / `resume` from a fresh SSH session; verified on macOS)
 5. `github init`: labels, notify workflow, GitHub App manifest flow; Telegram fires on a test label
 6. `issues sync` against a scratch repo with dependencies
 7. `kill`, `panic`, `status` (active sessions), `digest`

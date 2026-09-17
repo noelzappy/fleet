@@ -159,6 +159,7 @@ Observe: every GitHub issue (closed ones decide dependencies), fleet's Multica i
 | Conflicts | PR is `CONFLICTING` with the base branch (another agent's PR merged first) | Multica comment `@profile` asking for a rebase; `conflict_nudged` (head sha) prevents repeats |
 | Owner's commits | a commit message on the PR attributes the work to an agent, bot, model or tool | nudge once per head sha to amend and force-push (`attribution_nudged`); `pr-contract` blocks the merge; `orchestrator init` also turns off Multica's own Co-authored-by hook |
 | PR body | body lacks `Closes #N` or the `Model: <profile>` line | nudge once per PR (`body_nudged`) |
+| Closure | GitHub issue CLOSED (task) or PR no longer open (review) while the Multica issue isn't done | `multica issue status … done --no-start` |
 | Stranded runs | a `todo`/`in_progress` issue whose newest run failed with "task cancelled by server" (a daemon restart) and nothing is running | `multica issue rerun`, once per cancelled run (`rerun_of`); skipped while paused. The only retry fleet does: agent errors are never re-run |
 | Cross-vendor review | open PR on a mirrored issue with no review issue yet | create a Multica review issue assigned to a reviewer of a different vendor; it posts one `gh pr review` whose body ends `Reviewed-by: <profile> (<vendor>)` |
 

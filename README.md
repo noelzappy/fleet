@@ -155,21 +155,24 @@ fleet init --repo your-org/your-repo
 fleet --dry-run bootstrap
 fleet --dry-run orchestrator init
 
-# 3. On the fleet box, with fleet.yaml present
+# 3. On the fleet box, as the fleet user, with fleet.yaml present
 fleet bootstrap                   # OS deps, docker, node/pnpm, gh, tailscale, firewall, dirs
                                   # prints ✓ for steps already done; a second run changes nothing
+                                  # pauses at `tailscale up` until you open the printed link
 exec $SHELL -l                    # pick up node on PATH and docker group membership
-gh auth login
-git clone https://github.com/your-org/your-repo ~/fleet/your-repo   # = project.root
+git config --global user.name "Your Name"          # every agent commit carries this identity
+git config --global user.email "you@example.com"
+gh auth login && gh auth setup-git                 # see "Signing in over SSH" below
+gh repo clone your-org/your-repo ~/fleet/your-repo  # = project.root
 $EDITOR ~/.config/fleet/env       # secrets, KEY=VALUE, chmod 600 (bootstrap creates it)
 
-fleet harness add claude-code     # install + smoke test; repeat per harness
-fleet harness login claude-code   # if the smoke test needs auth; run inside tmux
+fleet harness add claude-code     # install + min_version + smoke test; repeat per harness
+                                  # a failing smoke test usually means: sign the CLI in, then re-run
 fleet harness verify              # every harness runs the gate headless in a worktree
 
 fleet github init                 # labels, pr-contract check + Telegram workflow (commit them via PR)
 fleet issues sync issues.yaml     # bulk-create GitHub issues, resolving depends_on
-fleet orchestrator init           # Multica: compose, CLI login (PAT), workspace, repo, agents, systemd units
+fleet orchestrator init           # Multica: compose, headless login (owner_email), workspace, repo, agents, service units
 fleet up                          # from then on `fleet sync` runs every sync_interval
 
 fleet status
@@ -197,7 +200,15 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 
 ### Harnesses
 
-A harness is one agent CLI. Several profiles can share a harness with different models. These are the kinds fleet supports, with invocations checked against the installed CLIs:
+A harness is one agent CLI. Several profiles share a harness with different models. Three harnesses cover every vendor:
+
+- **`claude-code`** for Anthropic models on your Claude plan.
+- **`antigravity`** (`agy`) for Google models on your Google AI subscription.
+- **`opencode`** for everything else: DeepSeek, GLM, OpenAI and free models through [OpenCode Zen](https://opencode.ai) (`opencode/deepseek-v4-pro`, `opencode/glm-5.3`, the free `opencode/big-pickle`, …), or through your own provider keys. `opencode models` lists what's available.
+
+A profile's `vendor` is the model's maker, not the gateway: `opencode/glm-5.3` is vendor `zai`, so a Claude or Gemini reviewer still counts as cross-vendor. Free models usually come with rate limits and data-use terms; read them before pointing one at private code, and prefer them for fixers or overflow.
+
+These are the kinds fleet supports, with invocations checked against the installed CLIs:
 
 | `kind` | Binary | Install | Sign-in | Headless invocation fleet uses for `harness verify` |
 |---|---|---|---|---|
@@ -214,7 +225,22 @@ A harness is one agent CLI. Several profiles can share a harness with different 
 
 **Google models through OpenCode need an API key.** OpenCode's Google provider takes a Gemini API key (AI Studio) or Vertex AI credentials; it can't use a Google AI Pro/Ultra subscription. The third-party `opencode-antigravity-auth` plugin that tried is archived, says in its own README that it violates Google's Terms of Service, and users report account bans. To use a subscription, route Google profiles through an `antigravity` harness instead, as `fleet.example.yaml` does.
 
-**Anthropic-compatible endpoints** (GLM and others) use `kind: claude-code` with `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` in `env`; see the `glm` harness in the example.
+**Anthropic-compatible endpoints** can also run through Claude Code: a `kind: claude-code` harness with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN: ${VAR}` in `env` (written to its `env_file`). OpenCode is usually simpler.
+
+### Signing in over SSH
+
+Every sign-in happens once, on the box, as the fleet user, in a normal SSH session (`ssh fleet@<box>`). The browser part happens on your own machine.
+
+| Tool | Command on the box | What you do |
+|---|---|---|
+| GitHub | `gh auth login` → GitHub.com → HTTPS → web browser, then `gh auth setup-git` | open github.com/login/device and enter the code it prints |
+| Claude Code | `claude` (or `claude login`) | open the printed URL, approve, paste the code back |
+| Antigravity | `agy` | open the printed URL, approve, paste the authorization code back (it waits 60 s) |
+| OpenCode | `opencode auth login` → OpenCode Zen (or another provider) | paste the API key from opencode.ai |
+| Tailscale | printed by `fleet bootstrap` | open the link and approve the machine |
+| Multica | none with `orchestrator.owner_email` set | `orchestrator init` signs in over the API; without it, create a token in the UI and paste it |
+
+Then `fleet harness add <name>` again: the smoke test should pass.
 
 ### Secrets
 
@@ -307,6 +333,7 @@ More workers won't fix a failing loop.
 
 **Pausing:**
 - **Soft pause** (`fleet pause`) stops new dispatches while running sessions finish and open their PRs. `fleet resume` closes the pause issue. Use it for day-to-day stops.
+- **Multica mirrors GitHub.** Closing a GitHub issue (merging its PR) marks its Multica task done, and a merged or closed PR marks its review done. A run cancelled by a daemon restart is re-run once. Other things `fleet sync` handles for you: a PR that conflicts after another merge gets a rebase request, a commit with an agent attribution line gets an amend request, and a PR body missing `Closes #N` or `Model:` gets a fix request. The full rule table is in [docs/orchestrator-decision.md](docs/orchestrator-decision.md).
 - **Escalations round-trip through labels.** An agent that sets its Multica issue to `blocked` gets a `needs-*` label and its comment on the GitHub issue within one sync interval. Answer on GitHub, remove the label, and the next tick tells the agent to read your answer and continue.
 - **Hard pause** (`fleet pause --hard`) stops workers immediately. Use it before changing `AGENTS.md`, the issue template or the docs agents read: merge the change, then resume. Running sessions keep the version they started with.
 - **Kill** (`fleet kill <n>`) is for one runaway session. Afterwards, check that session's spend.
@@ -346,11 +373,12 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `bootstrap` | ran for real on Ubuntu 24.04 (Hetzner) and macOS; second run a no-op on both |
 | `harness add/login/verify` | ran for real on Linux and macOS: claude-code, opencode, antigravity install, pass smoke, and run the gate headless (PASS) |
 | `orchestrator init/run` (Multica) | ran end to end on Linux (systemd) and macOS (launchd): headless login, workspace, repo, agents; second run a no-op; UI/API reachable on the Tailscale IP only |
-| `sync` | planner table-tested; ran live on macOS and from the systemd timer on Linux: dispatch, dependency hold, cross-vendor review, nudge, escalate, rebase, owner-only commits |
+| `sync` | planner table-tested; ran live on macOS and from the systemd timer on Linux: dispatch, dependency hold, cross-vendor review, nudge, escalate, rebase, owner-only commits, closure mirrored back to Multica |
 | `github init` | labels, `pr-contract` check and notify workflow; GitHub App manifest flow not implemented |
 | `issues sync` | implemented; not yet run against a live repo |
 | `up/pause/resume/kill/panic` | written; not yet verified on a box |
 | `digest` | prints `status` only; merged-in-24h, gate pass rate and Telegram delivery to do |
+| GitHub App | not implemented: agents currently use the box's `gh` login (your account). Use a scoped App token before a client repo |
 
 Build order for the rest of v0.1: bootstrap → harnesses → orchestrator → GitHub → issues → kill/panic/status/digest → init end to end.
 
