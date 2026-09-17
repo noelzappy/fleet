@@ -57,8 +57,9 @@ func issuesSync(_ *cobra.Command, a []string) error {
 	R := shell.Quote(cfg.Project.Repo)
 	numbers := map[string]string{}
 	for _, s := range specs {
-		out, err := shell.Output(ctx, fmt.Sprintf(`gh issue create -R %s --title %s --label %s --body %s`,
-			R, shell.Quote(s.Title), shell.Quote(strings.Join(s.Labels, ",")), shell.Quote(s.Body)))
+		// Bodies go over stdin so the trace stays one line per issue.
+		out, err := shell.OutputInput(ctx, fmt.Sprintf(`gh issue create -R %s --title %s --label %s --body-file -`,
+			R, shell.Quote(s.Title), shell.Quote(strings.Join(s.Labels, ","))), s.Body)
 		if err != nil {
 			return fmt.Errorf("create %q: %w", s.Title, err)
 		}
@@ -74,7 +75,7 @@ func issuesSync(_ *cobra.Command, a []string) error {
 			continue
 		}
 		body := dependsBody(s.Body, s.DependsOn, numbers)
-		if _, err := shell.Output(ctx, fmt.Sprintf(`gh issue edit -R %s %s --body %s`, R, numbers[s.Title], shell.Quote(body))); err != nil {
+		if _, err := shell.OutputInput(ctx, fmt.Sprintf(`gh issue edit -R %s %s --body-file -`, R, numbers[s.Title]), body); err != nil {
 			return err
 		}
 	}

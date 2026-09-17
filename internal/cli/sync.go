@@ -257,7 +257,7 @@ func setMeta(ctx context.Context, id string, kv map[string]string) error {
 		if _, err := strconv.Atoi(kv[k]); err == nil {
 			typ = "number"
 		}
-		if err := shell.Run(ctx, fmt.Sprintf("%s issue metadata set %s --key %s --value %s --type %s", multica, shell.Quote(id), k, shell.Quote(kv[k]), typ), nil); err != nil {
+		if err := shell.Run(ctx, fmt.Sprintf("%s issue metadata set %s --key %s --value %s --type %s >/dev/null", multica, shell.Quote(id), k, shell.Quote(kv[k]), typ), nil); err != nil {
 			return err
 		}
 	}
