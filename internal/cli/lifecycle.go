@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noelzappy/fleet/internal/fleetsync"
+	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/spf13/cobra"
 )
@@ -19,21 +21,27 @@ import (
 // <service>-sync.timer runs `fleet sync` (intake). The Multica server itself is docker
 // compose with restart policies and is left running across pause/resume.
 
-func units() string {
-	s := cfg.Orchestrator.ServiceName
-	return shell.Quote(s) + " " + shell.Quote(s+"-sync.timer")
+// jobs returns the platform and the two job names it manages (daemon, timer).
+func jobs(name string) (platform.Platform, []string, error) {
+	p, err := requireBox(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	abs, _ := filepath.Abs(cfgPath)
+	return p, p.Jobs(serviceSpec(abs)), nil
 }
 
 func upCmd() *cobra.Command {
 	return &cobra.Command{Use: "up", Short: "start the Multica server, daemon and sync timer", RunE: func(*cobra.Command, []string) error {
-		if err := requireLinux("up"); err != nil {
+		p, j, err := jobs("up")
+		if err != nil {
 			return err
 		}
 		ctx := context.Background()
 		if err := shell.Run(ctx, "cd "+shell.Quote(cfg.Orchestrator.Dir)+" && docker compose -f docker-compose.selfhost.yml -f docker-compose.fleet.yml up -d", nil); err != nil {
 			return err
 		}
-		return shell.Run(ctx, "systemctl --user enable --now "+units(), nil)
+		return shell.Run(ctx, p.StartCmd(j...), nil)
 	}}
 }
 
@@ -45,10 +53,11 @@ func pauseCmd() *cobra.Command {
 	c := &cobra.Command{Use: "pause", Short: "stop dispatching (soft) or stop the agents now (--hard)", RunE: func(*cobra.Command, []string) error {
 		ctx := context.Background()
 		if hard {
-			if err := requireLinux("pause --hard"); err != nil {
+			p, j, err := jobs("pause --hard")
+			if err != nil {
 				return err
 			}
-			return shell.Run(ctx, "systemctl --user stop "+units(), nil)
+			return shell.Run(ctx, p.StopCmd(j...), nil)
 		}
 		body := "paused by fleet cli at " + time.Now().UTC().Format(time.RFC3339)
 		return shell.Run(ctx, fmt.Sprintf(`gh issue create -R %s --title "FLEET PAUSED" --label %s --body %s`,
@@ -60,7 +69,8 @@ func pauseCmd() *cobra.Command {
 
 func resumeCmd() *cobra.Command {
 	return &cobra.Command{Use: "resume", Short: "close fleet-paused issues and start the daemon and sync timer", RunE: func(*cobra.Command, []string) error {
-		if err := requireLinux("resume"); err != nil {
+		p, j, err := jobs("resume")
+		if err != nil {
 			return err
 		}
 		ctx := context.Background()
@@ -73,7 +83,7 @@ func resumeCmd() *cobra.Command {
 				return err
 			}
 		}
-		return shell.Run(ctx, "systemctl --user start "+units(), nil)
+		return shell.Run(ctx, p.StartCmd(j...), nil)
 	}}
 }
 
@@ -124,11 +134,12 @@ func killCmd() *cobra.Command {
 // panic: stop everything, kill agent processes, print the by-hand checklist.
 func panicCmd() *cobra.Command {
 	return &cobra.Command{Use: "panic", Short: "stop the daemon and sync, kill agents, print the rotation checklist", RunE: func(*cobra.Command, []string) error {
-		if err := requireLinux("panic"); err != nil {
+		p, j, err := jobs("panic")
+		if err != nil {
 			return err
 		}
 		ctx := context.Background()
-		shell.Run(ctx, "systemctl --user stop "+units(), nil)
+		shell.Run(ctx, p.StopCmd(j...), nil)
 		shell.Run(ctx, `pkill -x claude; pkill -f "opencode run"; pkill -x agy; true`, nil)
 		fmt.Println("NOW, by hand:")
 		fmt.Println("  1. GitHub → Settings → Applications → " + cfg.GitHub.AppSlug + " → Suspend installation")

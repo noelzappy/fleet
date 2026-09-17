@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/noelzappy/fleet/internal/fleetsync"
@@ -24,8 +25,11 @@ func statusCmd() *cobra.Command {
 // and counts labels locally, instead of one gh call per label.
 func printStatus(ctx context.Context, w io.Writer) error {
 	R, L := shell.Quote(cfg.Project.Repo), cfg.Labels
-	svc, _ := shell.Output(ctx, `systemctl --user is-active `+shell.Quote(cfg.Orchestrator.ServiceName)+` || true`)
-	timer, _ := shell.Output(ctx, `systemctl --user is-active `+shell.Quote(cfg.Orchestrator.ServiceName+"-sync.timer")+` || true`)
+	p := box()
+	abs, _ := filepath.Abs(cfgPath)
+	j := p.Jobs(serviceSpec(abs))
+	svc, _ := shell.Output(ctx, p.IsActiveCmd(j[0]))
+	timer, _ := shell.Output(ctx, p.IsActiveCmd(j[1]))
 	running, _ := shell.Output(ctx, fmt.Sprintf(`%s issue list --output json --status in_progress --metadata %s --fields id 2>/dev/null | grep -o '"id"' | wc -l | tr -d ' '`,
 		multica, shell.Quote(fleetsync.MetaRepo+"="+cfg.Project.Repo)))
 	issuesJSON, issuesErr := shell.Output(ctx, fmt.Sprintf(`gh issue list -R %s --state open --limit 1000 --json labels`, R))

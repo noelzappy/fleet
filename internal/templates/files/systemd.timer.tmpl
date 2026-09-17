@@ -1,0 +1,10 @@
+[Unit]
+Description=Timer: {{ .Description }}
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec={{ .Interval }}
+Unit={{ .Name }}.service
+
+[Install]
+WantedBy=timers.target

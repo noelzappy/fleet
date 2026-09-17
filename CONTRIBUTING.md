@@ -33,6 +33,7 @@ cmd/fleet/              main
 internal/cli/           one file per command group (cobra); kinds.go holds per-harness CLI knowledge; sync.go observes and applies
 internal/config/        fleet.yaml types, defaults, validation, ${VAR} expansion
 internal/fleetsync/     the pure planner behind `fleet sync` (rules in docs/orchestrator-decision.md › Closing the gaps)
+internal/platform/      Linux (apt, ufw, systemd) and macOS (Homebrew, OrbStack, launchd) bootstrap steps and service commands
 internal/shell/         the only place commands run and files are written
 internal/templates/     embedded files fleet renders (Multica env + compose override, systemd units, workflows, AGENTS.md, issue template)
 docs/                   decisions
@@ -44,7 +45,7 @@ fleet.example.yaml      annotated reference config (kept identical to internal/t
 The fleet box is Linux; you'll probably develop on something else.
 
 - **Anywhere:** build, unit tests, every `--dry-run`, template rendering, `init`, `issues sync` against a scratch repo, and `harness add` / `verify` / `update` with the agent CLIs installed locally: Claude Code (`claude`), OpenCode (`opencode`) and Antigravity CLI (`agy`, which replaced Gemini CLI). Read their real `--help` before changing `internal/cli/kinds.go`. `harness verify` also needs Docker if the gate does.
-- **Linux only:** `bootstrap`, `orchestrator init/run`, `up`, `pause --hard`, `resume`, `panic`. These refuse to run on other OSes unless `--dry-run` is set (`requireLinux` in `internal/cli/root.go`).
+- **Box only (Linux or macOS):** `bootstrap`, `orchestrator init/run`, `up`, `pause --hard`, `resume`, `panic`. Everything OS-specific — package steps and the service manager (systemd user units vs launchd LaunchAgents) — lives in `internal/platform`; the commands call `requireBox` and get a `platform.Platform`. Under `--dry-run`, `FLEET_PLATFORM=linux|darwin` previews the other OS. Adding a platform means implementing that interface and its tests; nothing in `internal/cli` should branch on `runtime.GOOS`.
 
 ### Testing Linux commands on a box
 
@@ -52,6 +53,7 @@ Use a disposable VPS you can reinstall. `bootstrap` changes the firewall and SSH
 
 ```bash
 make deploy VPS=user@host     # cross-compile linux/amd64, scp to ~/.local/bin/fleet, print version
+make install                  # on a Mac that is itself the box
 ssh user@host 'cd ~/proj && fleet --dry-run bootstrap && fleet bootstrap'
 ssh user@host 'cd ~/proj && fleet bootstrap'   # second run must change nothing
 ```
@@ -69,7 +71,7 @@ Make sure SSH key login works before running `bootstrap` with `machine.firewall:
 Each step: implement → `make test` → run it for real (locally or on a box) → update the README where behaviour differs → commit.
 
 1. ~~`config`: `${VAR}` expansion, `ApplyDefaults`, tests, Linux guard~~
-2. `bootstrap` on a fresh Ubuntu 24.04 box; the second run is a no-op
+2. `bootstrap` on a fresh Ubuntu 24.04 box and on a Mac; the second run is a no-op
 3. `harness add/login/verify`: every harness runs the gate headless in a worktree; document OAuth-over-SSH login steps
 4. orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` against a live Multica on the box; `sync` end to end (create → escalate → unblock → review → nudge → stuck); dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
 5. `github init`: labels, notify workflow, GitHub App manifest flow; Telegram fires on a test label

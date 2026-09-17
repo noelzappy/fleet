@@ -10,7 +10,7 @@ project:
   root: ~/fleet/widgets         # the orchestrator's clone; worktrees are created beside it
   docs: docs                    # governance docs agents are pointed at
 
-machine:
+machine:                        # the box is Linux (Ubuntu 24.04) or macOS; bootstrap picks the steps by OS
   node: "24"
   pnpm: "11"
   docker: true

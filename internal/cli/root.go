@@ -2,10 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 
 	"github.com/noelzappy/fleet/internal/config"
+	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/spf13/cobra"
 )
@@ -41,13 +43,31 @@ func Root() *cobra.Command {
 	return root
 }
 
-// requireLinux guards commands that act on the fleet box (systemd, apt, ufw).
-// --dry-run is exempt so every command can be previewed from a laptop.
-func requireLinux(name string) error {
-	if runtime.GOOS != "linux" && !shell.DryRun {
-		return fmt.Errorf("%s acts on the fleet box — run this on the fleet box (or preview with --dry-run)", name)
+// requireBox guards commands that act on the fleet box (package managers, the
+// service manager, firewall) and returns its platform. Under --dry-run any OS may
+// preview any platform: FLEET_PLATFORM=linux|darwin picks which.
+func requireBox(name string) (platform.Platform, error) {
+	goos := runtime.GOOS
+	if shell.DryRun {
+		if o := os.Getenv("FLEET_PLATFORM"); o != "" {
+			goos = o
+		}
 	}
-	return nil
+	p, err := platform.For(goos)
+	if err != nil {
+		return nil, fmt.Errorf("%s acts on the fleet box: %w (or preview with --dry-run)", name, err)
+	}
+	return p, nil
+}
+
+// box is requireBox for commands that only read service state and never fail on
+// an unsupported OS (status): it falls back to Linux for the command shapes.
+func box() platform.Platform {
+	p, err := requireBox("")
+	if err != nil {
+		return platform.Linux{}
+	}
+	return p
 }
 
 func versionCmd() *cobra.Command {

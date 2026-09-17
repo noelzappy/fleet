@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noelzappy/fleet/internal/config"
+	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/noelzappy/fleet/internal/templates"
 	"github.com/spf13/cobra"
@@ -47,7 +48,8 @@ type orchData struct {
 }
 
 func orchInit(cmd *cobra.Command, _ []string) error {
-	if err := requireLinux("orchestrator init"); err != nil {
+	p, err := requireBox("orchestrator init")
+	if err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -59,18 +61,18 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	}
 	compose := "docker compose -f docker-compose.selfhost.yml -f docker-compose.fleet.yml"
 
-	secret := func(name, gen string) step {
-		return step{
-			name:  "secret " + name,
-			check: "grep -q '^" + name + "=' " + config.SecretsFile,
-			apply: "echo " + name + "=$(" + gen + ") >> " + config.SecretsFile,
+	secret := func(name, gen string) platform.Step {
+		return platform.Step{
+			Name:  "secret " + name,
+			Check: "grep -q '^" + name + "=' " + config.SecretsFile,
+			Apply: "echo " + name + "=$(" + gen + ") >> " + config.SecretsFile,
 		}
 	}
-	if _, err := runSteps(ctx, []step{
-		{name: "multica CLI", check: "command -v multica >/dev/null",
-			apply: "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash"},
-		{name: "multica checkout (latest release tag)", check: "test -d " + dir + "/.git",
-			apply: "git clone --depth 1 " + multicaRepo + " " + dir + " && cd " + dir + " && git fetch --tags --depth 1 && git checkout -q $(git tag -l 'v*' --sort=-v:refname | head -1)"},
+	if _, err := runSteps(ctx, []platform.Step{
+		{Name: "multica CLI", Check: "command -v multica >/dev/null",
+			Apply: "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash"},
+		{Name: "multica checkout (latest release tag)", Check: "test -d " + dir + "/.git",
+			Apply: "git clone --depth 1 " + multicaRepo + " " + dir + " && cd " + dir + " && git fetch --tags --depth 1 && git checkout -q $(git tag -l 'v*' --sort=-v:refname | head -1)"},
 		secret("JWT_SECRET", "openssl rand -hex 32"),
 		secret("POSTGRES_PASSWORD", "openssl rand -hex 24"),
 		secret("MULTICA_VCS_SECRET_KEY", "openssl rand -base64 32"),
@@ -89,9 +91,6 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	}{
 		{"multica.env.tmpl", filepath.Join(O.Dir, ".env"), 0o600},
 		{"docker-compose.fleet.yml.tmpl", filepath.Join(O.Dir, "docker-compose.fleet.yml"), 0o644},
-		{"fleet-multica.service.tmpl", unitPath(O.ServiceName + ".service"), 0o644},
-		{"fleet-multica-sync.service.tmpl", unitPath(O.ServiceName + "-sync.service"), 0o644},
-		{"fleet-multica-sync.timer.tmpl", unitPath(O.ServiceName + "-sync.timer"), 0o644},
 	} {
 		b, err := templates.Render(f.tmpl, data)
 		if err != nil {
@@ -101,30 +100,41 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+	spec := serviceSpec(data.ConfigPath)
+	files, err := p.ServiceFiles(spec)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := shell.WriteFile(f.Path, f.Data, f.Mode); err != nil {
+			return err
+		}
+	}
+	jobs := p.Jobs(spec)
 
 	api := "http://" + bind + ":8080"
 	app := "http://" + bind + ":3000"
-	if _, err := runSteps(ctx, []step{
-		{name: "multica server up (" + app + ")", check: "curl -fsS " + api + "/readyz >/dev/null 2>&1",
-			apply: "cd " + dir + " && " + compose + " up -d && for i in $(seq 1 90); do curl -fsS " + api + "/readyz >/dev/null 2>&1 && exit 0; sleep 2; done; echo 'multica did not become ready' >&2; exit 1"},
-		{name: "multica CLI points at this server", check: "multica config show 2>/dev/null | grep -q " + shell.Quote(api),
-			apply: "multica setup self-host --server-url " + api + " --app-url " + app},
-		{name: "multica login", check: "multica auth status >/dev/null 2>&1",
-			apply: fmt.Sprintf(`echo "Open %s over Tailscale and sign up. With no mail server the sign-in code is in the backend log:"; echo "  cd %s && %s logs backend | grep -i code"; echo "Then create a token under Settings → API Token and paste it below."; multica login --token`, app, dir, compose)},
-		{name: "systemd units loaded", check: "systemctl --user cat " + O.ServiceName + " >/dev/null 2>&1 && systemctl --user cat " + O.ServiceName + "-sync.timer >/dev/null 2>&1",
-			apply: "systemctl --user daemon-reload && loginctl enable-linger $USER"},
+	if _, err := runSteps(ctx, []platform.Step{
+		{Name: "multica server up (" + app + ")", Check: "curl -fsS " + api + "/readyz >/dev/null 2>&1",
+			Apply: "cd " + dir + " && " + compose + " up -d && for i in $(seq 1 90); do curl -fsS " + api + "/readyz >/dev/null 2>&1 && exit 0; sleep 2; done; echo 'multica did not become ready' >&2; exit 1"},
+		{Name: "multica CLI points at this server", Check: "multica config show 2>/dev/null | grep -q " + shell.Quote(api),
+			Apply: "multica setup self-host --server-url " + api + " --app-url " + app},
+		{Name: "multica login", Check: "multica auth status >/dev/null 2>&1",
+			Apply: fmt.Sprintf(`echo "Open %s over Tailscale and sign up. With no mail server the sign-in code is in the backend log:"; echo "  cd %s && %s logs backend | grep -i code"; echo "Then create a token under Settings → API Token and paste it below."; multica login --token`, app, dir, compose)},
 	}); err != nil {
+		return err
+	}
+	if err := shell.Run(ctx, p.ReloadCmd(spec), nil); err != nil {
 		return err
 	}
 
 	if err := ensureWorkspace(ctx); err != nil {
 		return err
 	}
-	if _, err := runSteps(ctx, []step{
-		{name: "repo registered", check: "multica repo list --output json | grep -q " + shell.Quote(cfg.Project.Repo),
-			apply: "multica repo add https://github.com/" + shell.Quote(cfg.Project.Repo)},
-		{name: "daemon running", check: "systemctl --user is-active --quiet " + O.ServiceName,
-			apply: "systemctl --user enable --now " + O.ServiceName},
+	if _, err := runSteps(ctx, []platform.Step{
+		{Name: "repo registered", Check: "multica repo list --output json | grep -q " + shell.Quote(cfg.Project.Repo),
+			Apply: "multica repo add https://github.com/" + shell.Quote(cfg.Project.Repo)},
+		{Name: "daemon running", Check: p.ActiveCheck(jobs[0]), Apply: p.StartCmd(jobs[0])},
 	}); err != nil {
 		return err
 	}
@@ -135,9 +145,8 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	if err := ensureAgents(ctx, runtimes); err != nil {
 		return err
 	}
-	if _, err := runSteps(ctx, []step{
-		{name: "sync timer running", check: "systemctl --user is-active --quiet " + O.ServiceName + "-sync.timer",
-			apply: "systemctl --user enable --now " + O.ServiceName + "-sync.timer"},
+	if _, err := runSteps(ctx, []platform.Step{
+		{Name: "sync timer running", Check: p.ActiveCheck(jobs[1]), Apply: p.StartCmd(jobs[1])},
 	}); err != nil {
 		return err
 	}
@@ -148,7 +157,7 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 // orchRun is what the systemd unit executes: the Multica daemon in the foreground,
 // with the flags derived from fleet.yaml kept here rather than in the unit file.
 func orchRun(cmd *cobra.Command, _ []string) error {
-	if err := requireLinux("orchestrator run"); err != nil {
+	if _, err := requireBox("orchestrator run"); err != nil {
 		return err
 	}
 	total := 0
@@ -190,8 +199,16 @@ func orchTemplateData(bind string) (orchData, error) {
 	return d, nil
 }
 
-func unitPath(name string) string {
-	return config.ExpandPath(filepath.Join("~/.config/systemd/user", name))
+// serviceSpec describes the two jobs fleet manages, for whichever service manager
+// the platform has. Exec starts with ~/ which each platform spells its own way.
+func serviceSpec(configPath string) platform.Spec {
+	name := cfg.Orchestrator.ServiceName
+	return platform.Spec{
+		Daemon: platform.Job{Name: name, Description: "Multica agent daemon for " + cfg.Project.Name + " (fleet)",
+			Exec: "~/.local/bin/fleet -c " + shell.Quote(configPath) + " orchestrator run", WorkingDir: cfg.Project.Root},
+		Sync: platform.Job{Name: name + "-sync", Description: "fleet sync for " + cfg.Project.Name + ": GitHub issues ⇄ Multica (one tick)",
+			Exec: "~/.local/bin/fleet -c " + shell.Quote(configPath) + " sync", WorkingDir: cfg.Project.Root, Interval: cfg.Orchestrator.SyncInterval},
+	}
 }
 
 // ensureWorkspace creates the Multica workspace named in fleet.yaml if missing and

@@ -1,9 +1,0 @@
-[Unit]
-Description=fleet sync for {{ .Project.Name }}: GitHub issues ⇄ Multica (one tick)
-After=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory={{ .Project.Root }}
-EnvironmentFile=%h/.config/fleet/env
-ExecStart=%h/.local/bin/fleet -c {{ .ConfigPath }} sync

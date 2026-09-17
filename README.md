@@ -4,7 +4,7 @@ Set up, run, and supervise a fleet of coding agents from different model vendors
 
 You write issues. Agents pick them up, work in their own git worktrees, run your gate, and open pull requests. An agent from a *different* vendor reviews each PR. You approve and merge. When an agent is unsure, it labels the issue and stops instead of guessing, and you get a Telegram message.
 
-`fleet` is the operator's tool for that loop. It is a single Go binary that turns a `fleet.yaml` into a running, supervised fleet on a Linux box, and gives you short commands to pause, resume, kill and inspect it from an SSH session on your phone.
+`fleet` is the operator's tool for that loop. It is a single Go binary that turns a `fleet.yaml` into a running, supervised fleet on a Linux or macOS box, and gives you short commands to pause, resume, kill and inspect it from an SSH session on your phone.
 
 > **Status: pre-release (v0.1 in progress).** The command surface is complete and every command supports `--dry-run`, but most commands have not yet been run end to end against real tools. Several agent-CLI flags and the orchestrator config are still unverified. See [Status](#status). Don't point this at a repo with production credentials.
 
@@ -92,10 +92,11 @@ Every command is **idempotent**: running it again on a machine that's already se
 
 ## Requirements
 
-**Fleet box** (where agents run):
-- Ubuntu 24.04, always on. A VPS with about 8 vCPU and 32 GB RAM runs roughly six concurrent agents. Docker is needed if your tests use containers.
-- A non-root user with `sudo` and **SSH key** login. `bootstrap` turns off SSH password authentication when `machine.firewall` is on.
-- A [Tailscale](https://tailscale.com) account if `machine.tailscale` is on. The orchestrator dashboard is only reachable over your tailnet.
+**Fleet box** (where agents run), one of:
+- **Ubuntu 24.04** VPS, always on. About 8 vCPU / 32 GB runs roughly six concurrent agents. `bootstrap` uses apt, ufw and systemd user units.
+- **macOS 14+ on Apple silicon** (a Mac mini that never sleeps). `bootstrap` uses Homebrew, OrbStack for Docker, `pmset` and launchd LaunchAgents. Two things it can't do for you: enable **automatic login** for the fleet user (LaunchAgents and the agent CLIs' keychain tokens need a logged-in session after a reboot), and per-interface firewall rules (macOS has none; fleet keeps the Multica ports on the Tailscale IP instead).
+
+Either way: a non-root user with `sudo` and **SSH key** login (`bootstrap` turns off SSH password authentication when `machine.firewall` is on), and a [Tailscale](https://tailscale.com) account if `machine.tailscale` is on. The Multica UI is only reachable over your tailnet. Docker (or OrbStack) runs Multica and your tests if they use containers.
 
 **Target repository:**
 - On GitHub, with branch protection on the default branch that requires your approval.
@@ -125,7 +126,7 @@ Then check that `ssh fleet@<host>` works from your laptop before going further. 
 
 ### Install the binary
 
-On the fleet box, as the fleet user:
+On the fleet box, as the fleet user (pick the asset for your OS: `fleet-linux-amd64` or `fleet-darwin-arm64`):
 
 ```bash
 mkdir -p ~/.local/bin
@@ -134,7 +135,7 @@ chmod +x ~/.local/bin/fleet
 fleet version
 ```
 
-From source (any OS; the Linux-only commands refuse to run elsewhere except with `--dry-run`):
+From source (the box commands run on Linux and macOS; elsewhere they only `--dry-run`):
 
 ```bash
 git clone https://github.com/noelzappy/fleet && cd fleet
@@ -237,12 +238,12 @@ How `${VAR}` is resolved:
 
 ## Commands
 
-Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`.
+Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`. "box" means Linux or macOS; under `--dry-run`, `FLEET_PLATFORM=linux|darwin` previews the other platform's commands.
 
 | Command | What it does | Runs on |
 |---|---|---|
 | `fleet init [--repo o/n]` | Scaffold `fleet.yaml`, `AGENTS.md`, issue template. Never overwrites. | anywhere |
-| `fleet bootstrap` | apt packages, docker, fnm + node, pnpm, gh, tailscale, ufw, SSH key-only, fleet dirs. Each step checks first and re-checks after applying | box |
+| `fleet bootstrap` | Linux: apt packages, docker, fnm + node, pnpm, gh, tailscale, ufw, SSH key-only, fleet dirs. macOS: Homebrew, OrbStack, fnm + node, pnpm, gh, tailscale, no-sleep, application firewall, sshd, SSH key-only. Each step checks first and re-checks after applying | box |
 | `fleet harness add <name>` | Run `install`, check `min_version`, write `env_file`, run `smoke` | anywhere |
 | `fleet harness login <name>` | Run the interactive `login` (use tmux over SSH) | anywhere |
 | `fleet harness verify` | Check `min_version`s, then a throwaway worktree where every harness runs the gate headless; PASS/FAIL table | box |
@@ -341,7 +342,7 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `--dry-run` for every command | implemented, checked |
 | `init` | implemented; not yet exercised end to end |
 | `status` | implemented; active sessions and spend per profile not yet shown |
-| `bootstrap` | written; not yet run on a real box |
+| `bootstrap` | Linux and macOS steps written and dry-run; not yet run on a real box |
 | `harness add/login/verify` | written; headless flags for each CLI unverified; OAuth-over-SSH steps not yet documented |
 | `orchestrator init/run` (Multica) | written against the Multica CLI built from source; not yet run against a live Multica |
 | `sync` | planner table-tested (26 cases); the observe/apply layer dry-runs but has not run against a live Multica |
@@ -354,7 +355,7 @@ Build order for the rest of v0.1: bootstrap → harnesses → orchestrator → G
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the design rules, the development setup, and how to test the Linux-only commands.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the design rules, the development setup, and how to test the box commands on Linux and macOS.
 
 ## License
 
