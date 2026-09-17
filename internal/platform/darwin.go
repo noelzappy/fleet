@@ -46,14 +46,14 @@ func (Darwin) BootstrapSteps(m config.Machine, root string) []Step {
 		})
 	}
 	steps = append(steps, nodeSteps(m, "$("+brew+" --prefix)/bin/fnm")...)
-	steps = append(steps,
-		dirsStep(root, "~/Library/LaunchAgents ~/Library/Logs/fleet", "stat -f %Lp"),
-		Step{
+	steps = append(steps, dirsStep(root, []string{"~/Library/LaunchAgents", "~/Library/Logs/fleet"}, "stat -f %Lp"))
+	if m.AlwaysOn {
+		steps = append(steps, Step{
 			Name:  "never sleep",
 			Check: `pmset -g 2>/dev/null | grep -Eq '^\s*sleep\s+0\b'`,
 			Apply: "sudo pmset -a sleep 0 disksleep 0",
-		},
-	)
+		})
+	}
 	if m.Tailscale {
 		steps = append(steps,
 			Step{Name: "tailscale", Check: "command -v tailscale >/dev/null", Apply: brew + " install tailscale"},

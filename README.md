@@ -182,7 +182,7 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 | Section | What it controls |
 |---|---|
 | `project` | `name`, `repo` (owner/name), `branch`, `root` (the orchestrator's clone on the box, default `~/fleet/<name>`), `docs` |
-| `machine` | node/pnpm versions, and whether bootstrap sets up `docker`, `tailscale`, `firewall`, `turbo_remote` |
+| `machine` | node/pnpm versions, and whether bootstrap sets up `docker`, `tailscale`, `firewall`, `always_on` (no sleep, macOS), `turbo_remote` |
 | `harnesses` | agent CLIs: `kind` (`claude-code`, `opencode`, `antigravity`), `install`, `login`, `smoke`, `min_version`, `update`, `env`, `env_file` — see [Harnesses](#harnesses) |
 | `profiles` | `harness` + `model` + `role` (`implementer`, `reviewer`, `fixer`) + `vendor` + `concurrency` + `waves` |
 | `waves` | ordered work streams; each becomes a `wave:<name>` label and sets dispatch priority |

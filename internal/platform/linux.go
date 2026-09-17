@@ -53,7 +53,7 @@ func (Linux) BootstrapSteps(m config.Machine, root string) []Step {
 			Check: "command -v gh >/dev/null",
 			Apply: `curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg status=none && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh`,
 		},
-		dirsStep(root, "~/.config/systemd/user", "stat -c %a"),
+		dirsStep(root, []string{"~/.config/systemd/user"}, "stat -c %a"),
 	)
 	if m.Tailscale {
 		steps = append(steps,
@@ -134,10 +134,16 @@ func profileStep(profile, extra string) Step {
 
 // dirsStep creates the fleet directories and the 0600 secrets file. statMode is the
 // platform's "print octal mode" command.
-func dirsStep(root, serviceDir, statMode string) Step {
+func dirsStep(root string, serviceDirs []string, statMode string) Step {
+	dirs := append([]string{"~/.config/fleet/profiles", "~/.local/bin"}, serviceDirs...)
+	dirs = append(dirs, quote(root))
+	var tests []string
+	for _, d := range dirs {
+		tests = append(tests, "test -d "+d)
+	}
 	return Step{
 		Name:  "fleet directories and secrets file",
-		Check: fmt.Sprintf(`test -d ~/.config/fleet/profiles && test -d %s && test -d %s && test "$(%s %s 2>/dev/null)" = 600`, serviceDir, quote(root), statMode, config.SecretsFile),
-		Apply: fmt.Sprintf(`mkdir -p ~/.config/fleet/profiles ~/.local/bin %s %s && touch %s && chmod 600 %s`, serviceDir, quote(root), config.SecretsFile, config.SecretsFile),
+		Check: fmt.Sprintf(`%s && test "$(%s %s 2>/dev/null)" = 600`, strings.Join(tests, " && "), statMode, config.SecretsFile),
+		Apply: fmt.Sprintf(`mkdir -p %s && touch %s && chmod 600 %s`, strings.Join(dirs, " "), config.SecretsFile, config.SecretsFile),
 	}
 }

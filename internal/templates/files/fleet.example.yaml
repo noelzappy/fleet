@@ -16,6 +16,7 @@ machine:                        # the box is Linux (Ubuntu 24.04) or macOS; boot
   docker: true
   tailscale: true               # dashboard is reachable over the tailnet only
   firewall: true                # ufw deny-incoming + SSH key-only auth
+  always_on: true               # dedicated box; on macOS bootstrap disables sleep
   turbo_remote:                 # optional; omit if the repo doesn't use Turborepo
     token_env: TURBO_TOKEN
     team: your-team
@@ -91,7 +92,7 @@ orchestrator:
   service_name: fleet-multica     # systemd units: fleet-multica (daemon), fleet-multica-sync.timer
   workspace: widgets              # Multica workspace; created by orchestrator init
   sync_interval: 2m
-  owner_email: you@example.com    # optional; restricts Multica sign-up to this address
+  owner_email: you@example.com    # lets orchestrator init sign the CLI in with no browser; also restricts Multica sign-up to it
 
 github:
   app_slug: widgets-fleet

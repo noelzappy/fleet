@@ -8,7 +8,7 @@ import (
 	"github.com/noelzappy/fleet/internal/config"
 )
 
-var full = config.Machine{NodeVersion: "24", Pnpm: "11", Docker: true, Tailscale: true, Firewall: true, TurboRemote: &config.Turbo{Team: "t"}}
+var full = config.Machine{NodeVersion: "24", Pnpm: "11", Docker: true, Tailscale: true, Firewall: true, AlwaysOn: true, TurboRemote: &config.Turbo{Team: "t"}}
 var minimal = config.Machine{NodeVersion: "24", Pnpm: "11"}
 
 func names(t *testing.T, steps []Step) map[string]int {
@@ -42,8 +42,8 @@ func TestBootstrapSteps(t *testing.T) {
 		{"darwin full", Darwin{}, full,
 			[]string{"homebrew", "brew packages", "docker (OrbStack)", "node 24", "pnpm 11", "never sleep", "tailscaled", "tailscale up", "application firewall on, stealth mode", "remote login (sshd) on", "SSH key installed for this user", "SSH password login disabled", "TURBO_TEAM in secrets file"}, nil},
 		{"darwin minimal", Darwin{}, minimal,
-			[]string{"homebrew", "brew packages", "node 24", "never sleep"},
-			[]string{"docker (OrbStack)", "tailscaled", "SSH password login disabled"}},
+			[]string{"homebrew", "brew packages", "node 24"},
+			[]string{"docker (OrbStack)", "tailscaled", "SSH password login disabled", "never sleep"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

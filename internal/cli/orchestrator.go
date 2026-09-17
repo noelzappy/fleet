@@ -117,11 +117,14 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	if _, err := runSteps(ctx, []platform.Step{
 		{Name: "multica server up (" + app + ")", Check: "curl -fsS " + api + "/readyz >/dev/null 2>&1",
 			Apply: "cd " + dir + " && " + compose + " up -d && for i in $(seq 1 90); do curl -fsS " + api + "/readyz >/dev/null 2>&1 && exit 0; sleep 2; done; echo 'multica did not become ready' >&2; exit 1"},
+		// `multica setup self-host` would also start a browser sign-in and time out on a
+		// headless box, so the two config keys are set directly.
 		{Name: "multica CLI points at this server", Check: "multica config show 2>/dev/null | grep -q " + shell.Quote(api),
-			Apply: "multica setup self-host --server-url " + api + " --app-url " + app},
-		{Name: "multica login", Check: "multica auth status >/dev/null 2>&1",
-			Apply: fmt.Sprintf(`echo "Open %s over Tailscale and sign up. With no mail server the sign-in code is in the backend log:"; echo "  cd %s && %s logs backend | grep -i code"; echo "Then create a token under Settings → API Token and paste it below."; multica login --token`, app, dir, compose)},
+			Apply: "multica config set server_url " + api + " && multica config set app_url " + app},
 	}); err != nil {
+		return err
+	}
+	if err := ensureLogin(ctx, api, app, dir, compose); err != nil {
 		return err
 	}
 	if err := shell.Run(ctx, p.ReloadCmd(spec), nil); err != nil {
@@ -200,15 +203,29 @@ func orchTemplateData(bind string) (orchData, error) {
 }
 
 // serviceSpec describes the two jobs fleet manages, for whichever service manager
-// the platform has. Exec starts with ~/ which each platform spells its own way.
+// the platform has. They exec the same fleet binary that ran `orchestrator init`,
+// so a build in ./bin works as well as an installed ~/.local/bin/fleet.
 func serviceSpec(configPath string) platform.Spec {
 	name := cfg.Orchestrator.ServiceName
+	bin := shell.Quote(selfPath())
 	return platform.Spec{
 		Daemon: platform.Job{Name: name, Description: "Multica agent daemon for " + cfg.Project.Name + " (fleet)",
-			Exec: "~/.local/bin/fleet -c " + shell.Quote(configPath) + " orchestrator run", WorkingDir: cfg.Project.Root},
+			Exec: bin + " -c " + shell.Quote(configPath) + " orchestrator run", WorkingDir: cfg.Project.Root},
 		Sync: platform.Job{Name: name + "-sync", Description: "fleet sync for " + cfg.Project.Name + ": GitHub issues ⇄ Multica (one tick)",
-			Exec: "~/.local/bin/fleet -c " + shell.Quote(configPath) + " sync", WorkingDir: cfg.Project.Root, Interval: cfg.Orchestrator.SyncInterval},
+			Exec: bin + " -c " + shell.Quote(configPath) + " sync", WorkingDir: cfg.Project.Root, Interval: cfg.Orchestrator.SyncInterval},
 	}
+}
+
+// selfPath is this binary's absolute path (symlinks resolved), or ~/.local/bin/fleet.
+func selfPath() string {
+	exe, err := os.Executable()
+	if err == nil {
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			return real
+		}
+		return exe
+	}
+	return config.ExpandPath("~/.local/bin/fleet")
 }
 
 // ensureWorkspace creates the Multica workspace named in fleet.yaml if missing and
@@ -370,4 +387,79 @@ func mergeEnv(a, b map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// ensureLogin signs the multica CLI in. With orchestrator.owner_email set it needs no
+// browser: the email-code exchange is plain HTTP, the code is printed to the backend
+// log when no mail server is configured, and a PAT is minted over the API. Without
+// owner_email it falls back to pasting a PAT from the web UI.
+// authCheck exits 0 iff the CLI holds a token: `auth status` exits 0 either way.
+const authCheck = "multica auth status 2>&1 | grep -qiv 'not authenticated'"
+
+func ensureLogin(ctx context.Context, api, app, dir, compose string) error {
+	if shell.Check(ctx, authCheck) {
+		fmt.Fprintln(os.Stderr, "✓ multica login")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "● multica login")
+	email := cfg.Orchestrator.OwnerEmail
+	if email == "" {
+		return shell.Run(ctx, fmt.Sprintf(`echo "Open %s (over Tailscale) and sign up. With no mail server the sign-in code is in the backend log:"; echo "  cd %s && %s logs backend | grep -i code"; echo "Create a token under Settings → API Token and paste it below (set orchestrator.owner_email to skip this)."; multica login --token`, app, dir, compose), nil)
+	}
+	post := func(path, body, bearer string) (map[string]any, error) {
+		cmd := "curl -fsS -X POST -H 'Content-Type: application/json'"
+		if bearer != "" {
+			cmd += " -H " + shell.Quote("Authorization: Bearer "+bearer)
+		}
+		out, err := shell.OutputInput(ctx, cmd+" --data-binary @- "+shell.Quote(api+path), body)
+		if err != nil {
+			return nil, fmt.Errorf("POST %s: %w", path, err)
+		}
+		var m map[string]any
+		return m, decode(out, &m)
+	}
+	body, _ := json.Marshal(map[string]string{"email": email})
+	if _, err := post("/auth/send-code", string(body), ""); err != nil {
+		return err
+	}
+	// The code lands in the backend log within a second or two.
+	var code string
+	for attempt := 0; attempt < 15 && code == ""; attempt++ {
+		out, _ := shell.Output(ctx, fmt.Sprintf("cd %s && %s logs backend --since 2m 2>/dev/null | grep -F %s | tail -1 | grep -oE '[0-9]{6}$'", dir, compose, shell.Quote("Verification code for "+email+":")))
+		code = strings.TrimSpace(out)
+		if code == "" && !shell.DryRun {
+			time.Sleep(2 * time.Second)
+		}
+		if shell.DryRun {
+			code = "<code>"
+		}
+	}
+	if code == "" {
+		return fmt.Errorf("no verification code for %s in the backend log — is a mail server configured (RESEND_API_KEY/SMTP_HOST)? Then sign in by hand: multica login --token", email)
+	}
+	body, _ = json.Marshal(map[string]string{"email": email, "code": code})
+	resp, err := post("/auth/verify-code", string(body), "")
+	if err != nil {
+		return err
+	}
+	jwt := str(resp["token"])
+	if jwt == "" && !shell.DryRun {
+		return fmt.Errorf("verify-code returned no token")
+	}
+	body, _ = json.Marshal(map[string]any{"name": "fleet " + cfg.Project.Name, "expires_in_days": 365})
+	resp, err = post("/api/tokens", string(body), jwt)
+	if err != nil {
+		return err
+	}
+	pat := str(resp["token"])
+	if pat == "" && !shell.DryRun {
+		return fmt.Errorf("token creation returned no token")
+	}
+	// Keep the PAT out of the printed command line: hand it over through a 0600 file.
+	tmp := config.ExpandPath("~/.config/fleet/multica-pat.tmp")
+	if err := shell.WriteFile(tmp, []byte(pat), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	return shell.Run(ctx, `multica login --token "$(cat `+shell.Quote(tmp)+`)"`, nil)
 }

@@ -46,6 +46,7 @@ type Machine struct {
 	Docker      bool   `yaml:"docker"`
 	Tailscale   bool   `yaml:"tailscale"`
 	Firewall    bool   `yaml:"firewall"`
+	AlwaysOn    bool   `yaml:"always_on"` // dedicated box: bootstrap disables sleep (macOS)
 	TurboRemote *Turbo `yaml:"turbo_remote,omitempty"`
 }
 
