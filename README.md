@@ -343,10 +343,10 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `--dry-run` for every command | implemented, checked |
 | `init` | implemented; not yet exercised end to end |
 | `status` | implemented; active sessions and spend per profile not yet shown |
-| `bootstrap` | macOS: ran for real, second run a no-op. Linux: written and dry-run only |
-| `harness add/login/verify` | `verify` ran for real on macOS: all three CLIs ran the gate headless and reported PASS |
-| `orchestrator init/run` (Multica) | ran end to end on macOS (headless login, workspace, repo, agents, LaunchAgents); not yet on Linux |
-| `sync` | planner table-tested (28 cases); ran live against a self-hosted Multica on macOS: dispatch, dependency hold, review, nudge, escalate, rebase |
+| `bootstrap` | ran for real on Ubuntu 24.04 (Hetzner) and macOS; second run a no-op on both |
+| `harness add/login/verify` | ran for real on Linux and macOS: claude-code, opencode, antigravity install, pass smoke, and run the gate headless (PASS) |
+| `orchestrator init/run` (Multica) | ran end to end on Linux (systemd) and macOS (launchd): headless login, workspace, repo, agents; second run a no-op; UI/API reachable on the Tailscale IP only |
+| `sync` | planner table-tested; ran live on macOS and from the systemd timer on Linux: dispatch, dependency hold, cross-vendor review, nudge, escalate, rebase, owner-only commits |
 | `github init` | labels, `pr-contract` check and notify workflow; GitHub App manifest flow not implemented |
 | `issues sync` | implemented; not yet run against a live repo |
 | `up/pause/resume/kill/panic` | written; not yet verified on a box |

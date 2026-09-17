@@ -71,8 +71,8 @@ Make sure SSH key login works before running `bootstrap` with `machine.firewall:
 Each step: implement → `make test` → run it for real (locally or on a box) → update the README where behaviour differs → commit.
 
 1. ~~`config`: `${VAR}` expansion, `ApplyDefaults`, tests, Linux guard~~
-2. `bootstrap` on a fresh Ubuntu 24.04 box and on a Mac; the second run is a no-op
-3. `harness add/login/verify`: every harness runs the gate headless in a worktree; document OAuth-over-SSH login steps
+2. ~~`bootstrap` on a fresh Ubuntu 24.04 box and on a Mac; the second run is a no-op~~
+3. ~~`harness add/login/verify`: every harness runs the gate headless in a worktree~~ (still to document: OAuth-over-SSH login steps)
 4. orchestrator (per [docs/orchestrator-decision.md](docs/orchestrator-decision.md)): `orchestrator init/run` against a live Multica on the box; `sync` end to end (create → escalate → unblock → review → nudge → stuck); dashboard reachable over Tailscale only; `up` / `pause --hard` / `resume` from a fresh SSH session
 5. `github init`: labels, notify workflow, GitHub App manifest flow; Telegram fires on a test label
 6. `issues sync` against a scratch repo with dependencies
