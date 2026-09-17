@@ -54,7 +54,7 @@ harnesses:
     min_version: 1.1.10
     install: npm i -g opencode-ai
     login: opencode auth login
-    smoke: cd /tmp && opencode run "print OK" | tail -1 | grep -q OK
+    smoke: cd /tmp && opencode run "Reply with exactly OK and nothing else." | tail -1 | grep -q OK
 
 # Profiles = harness + model + role. Profile names appear in PR bodies.
 # Every profile needs a vendor: with cross_vendor_review on, each implementer vendor

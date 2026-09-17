@@ -56,7 +56,8 @@ func harnessAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if h.Smoke != "" {
-		if err := shell.Run(ctx, h.Smoke, env); err != nil {
+		// No stdin: `opencode run` waits on a non-TTY stdin and `claude -p` stalls reading it.
+		if err := shell.Run(ctx, "( "+h.Smoke+" ) </dev/null", env); err != nil {
 			return fmt.Errorf("smoke failed for %s — if login is needed: fleet harness login %s", name, name)
 		}
 	}
@@ -100,7 +101,7 @@ func harnessVerify(cmd *cobra.Command, _ []string) error {
 		if h.EnvFile != "" { // e.g. a claude-code harness pointed at another vendor's endpoint
 			invoke += ". " + shell.Quote(h.EnvFile) + " && "
 		}
-		invoke += k.gateRun(prompt, cfg.Gate.Command, agentTimeout) + " | tail -1"
+		invoke += k.gateRun(prompt, cfg.Gate.Command, agentTimeout) + " </dev/null | tail -1"
 		out, err := shell.Output(ctx, invoke)
 		status := "FAIL"
 		switch {
