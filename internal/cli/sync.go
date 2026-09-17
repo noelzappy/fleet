@@ -296,7 +296,7 @@ func cancelMultica(ctx context.Context, id string) error {
 		if run == "" {
 			run = str(r["id"])
 		}
-		if err := shell.Run(ctx, multica+" issue cancel-task "+shell.Quote(run), nil); err != nil {
+		if err := shell.Run(ctx, multica+" issue cancel-task "+shell.Quote(run)+" >/dev/null", nil); err != nil {
 			return err
 		}
 	}

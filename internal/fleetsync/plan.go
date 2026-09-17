@@ -139,6 +139,11 @@ func Plan(f *config.Fleet, st State) []Action {
 	for _, m := range st.Multica {
 		switch m.Kind {
 		case KindTask:
+			// A cancelled task (fleet kill) no longer mirrors the issue: relabelling it
+			// agent-ready dispatches a fresh one. A live task always wins over a cancelled one.
+			if prev, ok := task[m.Issue]; m.Status == StatusCancelled || (ok && prev.Status != StatusCancelled) {
+				continue
+			}
 			task[m.Issue] = m
 		case KindReview:
 			review[m.PR] = m

@@ -131,7 +131,17 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	if _, err := runSteps(ctx, []platform.Step{
+		// Commits agents make are authored with the box's git identity; it must be the owner's.
+		{Name: "git identity is the owner's", Check: `test -n "$(git config --global user.name)" && test -n "$(git config --global user.email)"`,
+			Apply: `echo "set the owner's git identity on this box first: git config --global user.name '...' && git config --global user.email '...'" >&2; exit 1`},
+	}); err != nil {
+		return err
+	}
 	if err := ensureWorkspace(ctx); err != nil {
+		return err
+	}
+	if err := ensureOwnerCommits(ctx, api); err != nil {
 		return err
 	}
 	if _, err := runSteps(ctx, []platform.Step{
@@ -462,4 +472,69 @@ func ensureLogin(ctx context.Context, api, app, dir, compose string) error {
 	}
 	defer os.Remove(tmp)
 	return shell.Run(ctx, `multica login --token "$(cat `+shell.Quote(tmp)+`)"`, nil)
+}
+
+// ensureOwnerCommits turns off Multica's Co-authored-by hook for the workspace.
+// The daemon installs a prepare-commit-msg hook that appends
+// "Co-authored-by: multica-agent" to every agent commit, and GitHub keeps that
+// trailer through a squash merge. Commits must be the owner's, so the workspace
+// setting co_authored_by_enabled is set to false (the daemon re-reads it live).
+// The CLI has no flag for it; this goes through the API with the CLI's own token.
+func ensureOwnerCommits(ctx context.Context, api string) error {
+	token, wsID, err := multicaCLIAuth()
+	if err != nil {
+		return err
+	}
+	// The PAT travels in a 0600 header file so it never appears in the printed command.
+	hdr := config.ExpandPath("~/.config/fleet/multica-auth.tmp")
+	if err := shell.WriteFile(hdr, []byte("Authorization: Bearer "+token+"\n"), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(hdr)
+	url := shell.Quote(api + "/api/workspaces/" + wsID)
+	out, err := shell.Output(ctx, "curl -fsS -H @"+shell.Quote(hdr)+" "+url)
+	if err != nil {
+		return fmt.Errorf("GET workspace: %w", err)
+	}
+	var ws map[string]any
+	if err := decode(out, &ws); err != nil {
+		return fmt.Errorf("GET workspace: %w", err)
+	}
+	settings, _ := ws["settings"].(map[string]any)
+	if settings == nil {
+		settings = map[string]any{}
+	}
+	if v, ok := settings["co_authored_by_enabled"].(bool); ok && !v {
+		fmt.Fprintln(os.Stderr, "✓ agent commits carry no Co-authored-by trailer")
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "● agent commits carry no Co-authored-by trailer")
+	settings["co_authored_by_enabled"] = false
+	body, _ := json.Marshal(map[string]any{"settings": settings})
+	if _, err := shell.OutputInput(ctx, "curl -fsS -X PATCH -H 'Content-Type: application/json' -H @"+shell.Quote(hdr)+" --data-binary @- "+url, string(body)); err != nil {
+		return fmt.Errorf("PATCH workspace settings: %w", err)
+	}
+	return nil
+}
+
+// multicaCLIAuth reads the token and default workspace the multica CLI stored at login.
+func multicaCLIAuth() (token, workspaceID string, err error) {
+	if shell.DryRun {
+		return "<token>", "<workspace-id>", nil
+	}
+	b, err := os.ReadFile(config.ExpandPath("~/.multica/config.json"))
+	if err != nil {
+		return "", "", fmt.Errorf("multica CLI config: %w", err)
+	}
+	var c struct {
+		Token       string `json:"token"`
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return "", "", fmt.Errorf("multica CLI config: %w", err)
+	}
+	if c.Token == "" || c.WorkspaceID == "" {
+		return "", "", fmt.Errorf("multica CLI config has no token/workspace — run the login and workspace steps first")
+	}
+	return c.Token, c.WorkspaceID, nil
 }

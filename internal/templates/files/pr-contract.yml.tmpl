@@ -24,6 +24,9 @@ jobs:
           grep -Eq 'Closes #[0-9]+' <<<"$body" || { echo "::error::PR body must contain 'Closes #<issue>'"; exit 1; }
           impl=$(grep -Eo '^Model: *[A-Za-z0-9_-]+' <<<"$body" | head -1 | awk '{print $2}' || true)
           [ -n "$impl" ] || { echo "::error::PR body must contain a 'Model: <profile>' line"; exit 1; }
+          # Commits are the owner's: no attribution trailers from agents or tools.
+          bad=$(gh api "repos/$REPO/pulls/$PR/commits" --paginate -q '.[].commit.message' | grep -iE '^(Co-authored-by|Signed-off-by):.*(agent|bot|claude|gemini|gpt|codex|opencode|multica|anthropic|google|openai)|generated with|claude-session' || true)
+          [ -z "$bad" ] || { echo "::error::commits carry agent attribution; amend them: $bad"; exit 1; }
           implv=$(jq -r --arg p "$impl" '.[$p] // empty' <<<"$VENDORS")
           [ -n "$implv" ] || { echo "::error::unknown profile '$impl' in Model line"; exit 1; }
           ok=0

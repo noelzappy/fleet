@@ -317,6 +317,7 @@ More workers won't fix a failing loop.
 ## Security model
 
 - **Agents run with permissions bypassed.** Multica starts every harness in its non-interactive, auto-approve mode (`--permission-mode bypassPermissions`, `--dangerously-skip-permissions`); nothing on the box should be something you can't rotate.
+- **Commits are the owner's.** Agents commit with the git identity configured on the box (set `git config --global user.name/user.email` to yours; `orchestrator init` checks it), never add `Co-authored-by`/"Generated with" trailers (the `AGENTS.md` scaffold forbids it and `pr-contract` fails PRs that carry one), and `orchestrator init` turns off Multica's own Co-authored-by hook. Attribution lives in the PR body's `Model:` line only.
 - **Agents use a GitHub App, not your personal token.** Permissions: contents write, pull requests write, issues write, metadata read, checks read. **No administration and no workflows**, so an agent can't approve, merge past protection, or edit CI to weaken the gate.
 - **Secrets** live only in `~/.config/fleet/env` and per-harness env files, both `0600`. Never in `fleet.yaml`, the repo or issues. Put a hard spend cap on every provider key that supports one.
 - **Network:** `bootstrap` denies all incoming traffic except SSH and the tailnet, and turns off SSH password auth. Bind the orchestrator dashboard to your Tailscale IP, never `0.0.0.0`.

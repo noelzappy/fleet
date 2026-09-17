@@ -34,6 +34,8 @@ Fields: What I was doing / What's unclear / Options A,B with consequences / Reco
 ## 8. Pull request contract
 Branch `agent/<issue>-<slug>`. Title `<type>(<module>): <what> [#<issue>]`. Body: Closes, What, AC→tests, Scope check, Not done, Model/cost. Never merge, never approve.
 
+**Commits are the owner's.** Every commit is authored and committed as the repository owner (the git identity configured on this machine). Never add `Co-authored-by`, `Signed-off-by`, "Generated with", a model name, a session link, or any other line that attributes the commit to you, a tool or a vendor. The only attribution allowed is the `Model:` line in the PR body. If a hook or tool adds such a trailer, remove it before pushing (`git commit --amend`); the `pr-contract` check fails PRs that carry one.
+
 ## 9. Conventions
 <FILL or link CODE-STRUCTURE.md>
 
