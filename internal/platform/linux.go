@@ -14,7 +14,7 @@ type Linux struct{}
 func (Linux) Name() string { return "linux" }
 
 func (Linux) BootstrapSteps(m config.Machine, root string) []Step {
-	aptPkgs := "git tmux curl jq build-essential ufw fail2ban"
+	aptPkgs := "git tmux curl jq unzip build-essential ufw fail2ban"
 	steps := []Step{{
 		Name:  "apt packages",
 		Check: "dpkg -s " + aptPkgs + " >/dev/null 2>&1",

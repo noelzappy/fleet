@@ -8,5 +8,5 @@ dist:         linux darwin
 test:         ; go test ./...
 lint:         ; go vet ./...
 install:      build ; install -m 0755 bin/$(BIN) $(HOME)/.local/bin/$(BIN)
-deploy:       linux ; scp dist/$(BIN)-linux-amd64 $(VPS):~/.local/bin/$(BIN) && ssh $(VPS) 'chmod +x ~/.local/bin/fleet && fleet version'
+deploy:       linux ; ssh $(VPS) 'mkdir -p ~/.local/bin' && scp dist/$(BIN)-linux-amd64 $(VPS):~/.local/bin/$(BIN) && ssh $(VPS) 'chmod +x ~/.local/bin/fleet && ~/.local/bin/fleet version'
 release:      dist ; gh release create $(TAG) dist/$(BIN)-linux-amd64 dist/$(BIN)-darwin-arm64 --title $(TAG) --notes "fleet $(TAG)"
