@@ -157,6 +157,8 @@ Observe: every GitHub issue (closed ones decide dependencies), fleet's Multica i
 | Gate | newest gate run on the PR failed, not yet reported | Multica comment `@profile` with the run and failed jobs (lint/typecheck-only failures go to a fixer when `fixer_only_lint`); `gate_nudged_run` prevents repeats |
 | Attempts | failed gate runs ≥ `max_gate_attempts` | `agent-stuck`, remove `agent-ready`, comment, cancel Multica runs |
 | Conflicts | PR is `CONFLICTING` with the base branch (another agent's PR merged first) | Multica comment `@profile` asking for a rebase; `conflict_nudged` (head sha) prevents repeats |
+| Owner's commits | a commit message on the PR attributes the work to an agent, bot, model or tool | nudge once per head sha to amend and force-push (`attribution_nudged`); `pr-contract` blocks the merge; `orchestrator init` also turns off Multica's own Co-authored-by hook |
+| PR body | body lacks `Closes #N` or the `Model: <profile>` line | nudge once per PR (`body_nudged`) |
 | Cross-vendor review | open PR on a mirrored issue with no review issue yet | create a Multica review issue assigned to a reviewer of a different vendor; it posts one `gh pr review` whose body ends `Reviewed-by: <profile> (<vendor>)` |
 
 Enforcement of the review rule is the generated **`pr-contract`** GitHub check (`fleet github init`), a required status check: PR body has `Closes #N` and `Model: <profile>`, and at least one review carries `Reviewed-by` from a profile whose vendor differs. Humans still approve and merge.
