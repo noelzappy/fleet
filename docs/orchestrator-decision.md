@@ -132,7 +132,7 @@ Decision, 2026-09-16: every gap above that can be closed in code is closed by on
 
 ### The line
 
-fleet sync may decide **what is eligible**: ready labels, dependencies closed, not paused, attempts left, which profile an issue or review is assigned to. It never decides **when or on which worker** something runs, never manages sessions, and never retries. Multica's per-agent concurrency and queue do that. If a change to `internal/fleetsync` would make fleet pick *the next thing to run*, it is on the wrong side of the line.
+fleet sync may decide **what is eligible**: ready labels, dependencies closed, not paused, attempts left, which profile an issue or review is assigned to. It never decides **when or on which worker** something runs, never manages sessions, and never retries agent work. The one exception is a run the Multica server cancelled during a daemon restart, which Multica itself doesn't retry; fleet re-runs it once. Multica's per-agent concurrency and queue do that. If a change to `internal/fleetsync` would make fleet pick *the next thing to run*, it is on the wrong side of the line.
 
 ### Ownership
 
@@ -159,6 +159,7 @@ Observe: every GitHub issue (closed ones decide dependencies), fleet's Multica i
 | Conflicts | PR is `CONFLICTING` with the base branch (another agent's PR merged first) | Multica comment `@profile` asking for a rebase; `conflict_nudged` (head sha) prevents repeats |
 | Owner's commits | a commit message on the PR attributes the work to an agent, bot, model or tool | nudge once per head sha to amend and force-push (`attribution_nudged`); `pr-contract` blocks the merge; `orchestrator init` also turns off Multica's own Co-authored-by hook |
 | PR body | body lacks `Closes #N` or the `Model: <profile>` line | nudge once per PR (`body_nudged`) |
+| Stranded runs | a `todo`/`in_progress` issue whose newest run failed with "task cancelled by server" (a daemon restart) and nothing is running | `multica issue rerun`, once per cancelled run (`rerun_of`); skipped while paused. The only retry fleet does: agent errors are never re-run |
 | Cross-vendor review | open PR on a mirrored issue with no review issue yet | create a Multica review issue assigned to a reviewer of a different vendor; it posts one `gh pr review` whose body ends `Reviewed-by: <profile> (<vendor>)` |
 
 Enforcement of the review rule is the generated **`pr-contract`** GitHub check (`fleet github init`), a required status check: PR body has `Closes #N` and `Model: <profile>`, and at least one review carries `Reviewed-by` from a profile whose vendor differs. Humans still approve and merge.

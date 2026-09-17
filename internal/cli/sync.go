@@ -96,6 +96,12 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 				Conflicted: str(md[fleetsync.MetaConflict]),
 				Attributed: str(md[fleetsync.MetaAttrib]),
 				BodyNudged: num(md[fleetsync.MetaBody]),
+				RerunOf:    str(md[fleetsync.MetaRerun]),
+			}
+			if m.Status == "todo" || m.Status == "in_progress" {
+				if err := latestRun(ctx, &m); err != nil {
+					return st, err
+				}
 			}
 			if m.Kind == fleetsync.KindTask && m.Status == fleetsync.StatusBlocked {
 				m.LastComment = lastComment(ctx, m.ID)
@@ -177,6 +183,29 @@ func gateRuns(ctx context.Context, branch string) ([]fleetsync.GateRun, error) {
 	return runs, nil
 }
 
+// latestRun fills the issue's newest run (the CLI lists newest first) and whether
+// any run is active, which is what the stranded-run rule needs.
+func latestRun(ctx context.Context, m *fleetsync.MIssue) error {
+	out, err := shell.Output(ctx, multica+" issue runs "+shell.Quote(m.ID)+" --output json")
+	if err != nil {
+		return fmt.Errorf("multica issue runs %s: %w", m.ID, err)
+	}
+	rows, _, err := jsonRows(out, "runs", "tasks")
+	if err != nil {
+		return fmt.Errorf("multica issue runs %s: %w", m.ID, err)
+	}
+	for i, r := range rows {
+		switch str(r["status"]) {
+		case "queued", "dispatched", "running", "waiting_local_directory":
+			m.RunActive = true
+		}
+		if i == 0 {
+			m.LastRunID, m.LastRunStatus, m.LastRunError = str(r["id"]), str(r["status"]), str(r["error"])
+		}
+	}
+	return nil
+}
+
 // lastComment returns the newest comment on a Multica issue, "" if none or on error
 // (escalation then falls back to needs-human with a generic body).
 func lastComment(ctx context.Context, id string) string {
@@ -247,6 +276,11 @@ func apply(ctx context.Context, a fleetsync.Action) error {
 			return err
 		}
 		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaAttrib: a.PR.HeadSHA})
+	case "rerun":
+		if err := shell.Run(ctx, multica+" issue rerun "+shell.Quote(a.Multica.ID)+" >/dev/null", nil); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaRerun: a.Multica.LastRunID})
 	case "fix-body":
 		if err := multicaComment(ctx, a.Multica.ID, a.Comment); err != nil {
 			return err

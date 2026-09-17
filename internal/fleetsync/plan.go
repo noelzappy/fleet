@@ -32,6 +32,7 @@ const (
 	MetaConflict = "conflict_nudged"    // head sha the agent was told conflicts with the base branch
 	MetaAttrib   = "attribution_nudged" // head sha the agent was told carries an attribution trailer
 	MetaBody     = "body_nudged"        // PR number the agent was told has a non-conforming body
+	MetaRerun    = "rerun_of"           // id of the server-cancelled run fleet re-ran
 )
 
 const (
@@ -55,17 +56,23 @@ type GHIssue struct {
 
 // MIssue is a Multica issue fleet created (metadata fleet_repo set).
 type MIssue struct {
-	ID          string
-	Status      string
-	Kind        string
-	Issue       int    // gh_issue
-	PR          int    // gh_pr, reviews only
-	Profile     string // fleet_profile
-	NudgedRun   string // gate_nudged_run
-	Conflicted  string // conflict_nudged
-	Attributed  string // attribution_nudged
-	BodyNudged  int    // body_nudged
-	LastComment string // newest comment body; filled only for blocked issues
+	ID         string
+	Status     string
+	Kind       string
+	Issue      int    // gh_issue
+	PR         int    // gh_pr, reviews only
+	Profile    string // fleet_profile
+	NudgedRun  string // gate_nudged_run
+	Conflicted string // conflict_nudged
+	Attributed string // attribution_nudged
+	BodyNudged int    // body_nudged
+	RerunOf    string // rerun_of
+	// Latest run, filled for issues that should be working (todo, in_progress).
+	LastRunID     string
+	LastRunStatus string
+	LastRunError  string
+	RunActive     bool
+	LastComment   string // newest comment body; filled only for blocked issues
 }
 
 // PR is an open pull request on a fleet branch (agent/<issue>-<slug>).
@@ -122,6 +129,8 @@ func (a Action) String() string {
 		return fmt.Sprintf("nudge          #%d PR #%d run %s → @%s", a.Issue.Number, a.PR.Number, a.Run.ID, a.Profile)
 	case "rebase":
 		return fmt.Sprintf("rebase         #%d PR #%d %s → @%s", a.Issue.Number, a.PR.Number, a.PR.HeadSHA, a.Profile)
+	case "rerun":
+		return fmt.Sprintf("rerun          %s %s (run %s cancelled by server)", a.Multica.Kind, a.Multica.ID, a.Multica.LastRunID)
 	case "fix-body":
 		return fmt.Sprintf("fix-body       #%d PR #%d → @%s", a.Issue.Number, a.PR.Number, a.Profile)
 	case "strip-attribution":
@@ -189,6 +198,33 @@ func Plan(f *config.Fleet, st State) []Action {
 			}
 		case m.Status == StatusBlocked:
 			out = append(out, Action{Kind: "unblock", Issue: is, Multica: m})
+		}
+	}
+
+	// Runs stranded by a daemon restart: Multica marks them failed with "task cancelled
+	// by server" and doesn't retry, leaving the issue in todo forever. This is the one
+	// failure fleet re-runs — never agent errors, which stay the agent's to report.
+	openPR := map[int]bool{}
+	for _, pr := range st.PRs {
+		openPR[pr.Number] = true
+	}
+	if !paused {
+		for _, m := range st.Multica {
+			if !Stranded(m) {
+				continue
+			}
+			switch m.Kind {
+			case KindTask:
+				is, ok := byNum[m.Issue]
+				if !ok || is.State != "OPEN" || has(is.Labels, L.Stuck) || task[m.Issue].ID != m.ID {
+					continue
+				}
+				out = append(out, Action{Kind: "rerun", Issue: is, Multica: m})
+			case KindReview:
+				if openPR[m.PR] {
+					out = append(out, Action{Kind: "rerun", Issue: byNum[m.Issue], Multica: m})
+				}
+			}
 		}
 	}
 
@@ -447,4 +483,12 @@ func BodyErrors(body string, issue int, profile string) []string {
 		errs = append(errs, fmt.Sprintf("`Model: %s` should be `Model: %s`", m[1], profile))
 	}
 	return errs
+}
+
+// Stranded reports a Multica issue that should be working but whose latest run was
+// cancelled by the server (a daemon restart) and that fleet hasn't re-run yet.
+func Stranded(m MIssue) bool {
+	return (m.Status == "todo" || m.Status == "in_progress") && !m.RunActive &&
+		m.LastRunStatus == "failed" && strings.Contains(m.LastRunError, "cancelled by server") &&
+		m.LastRunID != "" && m.LastRunID != m.RerunOf
 }
