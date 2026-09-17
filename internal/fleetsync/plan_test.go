@@ -87,8 +87,9 @@ func TestPlan(t *testing.T) {
 			[]string{"rerun          review m2 (run r9 cancelled by server)"}},
 		{"already re-ran that run: nothing",
 			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "todo", LastRunID: "r1", LastRunStatus: "failed", LastRunError: "task cancelled by server", RerunOf: "r1"}}}, nil},
-		{"agent error is not re-run",
-			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "todo", LastRunID: "r1", LastRunStatus: "failed", LastRunError: "build failed"}}}, nil},
+		{"agent error is escalated, not re-run",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "todo", Profile: "impl-g", LastRunID: "r1", LastRunStatus: "failed", LastRunError: "build failed"}}},
+			[]string{"escalate-fail  task #1 run r1 (impl-g) +needs-human"}},
 		{"stranded but paused: wait",
 			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui"), open(9, "fleet-paused")}, Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "todo", LastRunID: "r1", LastRunStatus: "failed", LastRunError: "task cancelled by server"}}}, nil},
 		{"GitHub issue closed: task done in Multica",
@@ -194,12 +195,12 @@ func TestReviewerSameVendorWhenRuleOff(t *testing.T) {
 	f := fleet()
 	f.Routing.CrossVendorReview = false
 	// PR 11: candidates sorted [rev-a rev-g], 11%2=1 → rev-g, same vendor as impl-g: allowed.
-	r, ok := routeReviewer(f, "impl-g", 11)
+	r, ok := routeReviewer(f, "impl-g", 11, nil)
 	if !ok || r != "rev-g" {
 		t.Errorf("got %s %v", r, ok)
 	}
 	f.Routing.CrossVendorReview = true
-	r, _ = routeReviewer(f, "impl-g", 11)
+	r, _ = routeReviewer(f, "impl-g", 11, nil)
 	if r != "rev-a" {
 		t.Errorf("cross-vendor: got %s", r)
 	}
@@ -265,5 +266,61 @@ func TestBodyErrors(t *testing.T) {
 	}
 	if got := BodyErrors("closes #3 and fixes it", 3, ""); len(got) != 1 || !strings.Contains(got[0], "Model") {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestSignedOutAndFailures(t *testing.T) {
+	f := fleet()
+	fail := func(m MIssue) MIssue {
+		m.LastRunID, m.LastRunStatus, m.LastRunError = "r1", "failed", "401 Unauthorized: not logged in"
+		return m
+	}
+	tests := []struct {
+		name string
+		st   State
+		want []string
+	}{
+		{"routing skips signed-out implementer",
+			State{GH: []GHIssue{open(3, "agent-ready", "wave:backend")}, SignedOut: map[string]bool{"cc": true}},
+			[]string{"create-task    #3 → impl-g"}}, // #3 would spread to impl-g anyway; check #2 next
+		{"spread target signed out: other implementer",
+			State{GH: []GHIssue{open(2, "agent-ready", "wave:backend")}, SignedOut: map[string]bool{"cc": true}},
+			[]string{"create-task    #2 → impl-g"}},
+		{"every implementer signed out: wait",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, SignedOut: map[string]bool{"agy": true}}, nil},
+		{"reviewer signed out: other cross-vendor reviewer missing, so wait",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica:   []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "in_review", Profile: "impl-g"}},
+				PRs:       []PR{{Number: 10, Head: "agent/1-x", Issue: 1}},
+				SignedOut: map[string]bool{"cc": true}}, nil},
+		{"agent failure escalates once with needs-human",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{fail(MIssue{ID: "m1", Kind: "task", Issue: 1, Status: "in_progress", Profile: "impl-g"})}},
+			[]string{"escalate-fail  task #1 run r1 (impl-g) +needs-human"}},
+		{"escalated and labelled: wait",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui", "needs-human")}, Multica: []MIssue{fail(MIssue{ID: "m1", Kind: "task", Issue: 1, Status: "in_progress", Profile: "impl-g", FailureEsc: "r1"})}}, nil},
+		{"label removed, harness signed in: retry same profile",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{fail(MIssue{ID: "m1", Kind: "task", Issue: 1, Status: "in_progress", Profile: "impl-g", FailureEsc: "r1"})}},
+			[]string{"retry          task #1 → impl-g"}},
+		{"label removed, harness still signed out: re-route",
+			State{GH: []GHIssue{open(2, "agent-ready", "wave:backend")}, Multica: []MIssue{fail(MIssue{ID: "m1", Kind: "task", Issue: 2, Status: "todo", Profile: "impl-a", FailureEsc: "r1"})}, SignedOut: map[string]bool{"cc": true}},
+			[]string{"retry          task #2 impl-a → impl-g (re-routed)"}},
+		{"already retried that run: nothing",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{fail(MIssue{ID: "m1", Kind: "task", Issue: 1, Status: "todo", Profile: "impl-g", FailureEsc: "r1", RerunOf: "r1"})}}, nil},
+		{"failed review escalates on the issue",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")},
+				Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "in_review", Profile: "impl-g"}, fail(MIssue{ID: "m2", Kind: "review", Issue: 1, PR: 10, Status: "todo", Profile: "rev-a"})},
+				PRs:     []PR{{Number: 10, Head: "agent/1-x", Issue: 1}}},
+			[]string{"escalate-fail  review #1 run r1 (rev-a) +needs-human"}},
+		{"server cancellation is not an agent failure",
+			State{GH: []GHIssue{open(1, "agent-ready", "wave:ui")}, Multica: []MIssue{{ID: "m1", Kind: "task", Issue: 1, Status: "todo", Profile: "impl-g", LastRunID: "r1", LastRunStatus: "failed", LastRunError: "task cancelled by server"}}},
+			[]string{"rerun          task m1 (run r1 cancelled by server)"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := kinds(Plan(f, tt.st))
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got  %q\nwant %q", got, tt.want)
+			}
+		})
 	}
 }

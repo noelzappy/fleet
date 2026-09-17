@@ -62,10 +62,13 @@ type Harness struct {
 	Smoke   string `yaml:"smoke"`   // headless; must exit 0
 	// MinVersion is the lowest version fleet will run. harness add/verify/update fail below it.
 	// Set it from the tool's security advisories; see README › Security model.
-	MinVersion string            `yaml:"min_version"`
-	Update     string            `yaml:"update"`   // overrides the kind's default update command
-	Env        map[string]string `yaml:"env"`      // e.g. ANTHROPIC_BASE_URL for GLM
-	EnvFile    string            `yaml:"env_file"` // ~/.config/fleet/profiles/<name>.env
+	MinVersion string `yaml:"min_version"`
+	Update     string `yaml:"update"` // overrides the kind's default update command
+	// AuthCheck exits 0 iff the CLI is signed in; overrides the kind's default (useful
+	// when a harness authenticates through env vars or a custom provider instead).
+	AuthCheck string            `yaml:"auth_check"`
+	Env       map[string]string `yaml:"env"`      // e.g. ANTHROPIC_BASE_URL for GLM
+	EnvFile   string            `yaml:"env_file"` // ~/.config/fleet/profiles/<name>.env
 }
 
 type Profile struct {
@@ -221,7 +224,7 @@ func (f *Fleet) ApplyDefaults() {
 }
 
 // HarnessKinds are the agent CLIs fleet knows how to install, run headless and check.
-var HarnessKinds = []string{"claude-code", "opencode", "antigravity"}
+var HarnessKinds = []string{"claude-code", "opencode", "antigravity", "codex"}
 
 func (f *Fleet) validate() error {
 	if f.Project.Name == "" || f.Project.Repo == "" {

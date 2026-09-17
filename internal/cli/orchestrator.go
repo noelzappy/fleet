@@ -33,7 +33,7 @@ func orchestratorCmd() *cobra.Command {
 
 // providerFor maps a harness kind to the Multica runtime provider that drives it
 // (names from multica/server/pkg/agent/agent.go).
-var providerFor = map[string]string{"claude-code": "claude", "opencode": "opencode", "antigravity": "antigravity"}
+var providerFor = map[string]string{"claude-code": "claude", "opencode": "opencode", "antigravity": "antigravity", "codex": "codex"}
 
 const multicaRepo = "https://github.com/multica-ai/multica.git"
 

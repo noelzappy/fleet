@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/noelzappy/fleet/internal/fleetsync"
 	"github.com/noelzappy/fleet/internal/shell"
@@ -54,6 +55,15 @@ func printStatus(ctx context.Context, w io.Writer) error {
 	fmt.Fprintf(w, "ready: %s   stuck: %s   open PRs: %s\n", count(L.Ready), count(L.Stuck), prs)
 	fmt.Fprintf(w, "needs-human: %s   needs-resource: %s   needs-contract: %s\n",
 		count(L.NeedsHuman), count(L.NeedsResource), count(L.NeedsContract))
+	if out := signedOut(ctx, cfg.Harnesses); len(out) > 0 {
+		var names []string
+		for _, n := range sortedHarnessNames() {
+			if out[n] {
+				names = append(names, n)
+			}
+		}
+		fmt.Fprintf(w, "signed out: %s (no new work routed to their profiles)\n", strings.Join(names, ", "))
+	}
 	// TODO(implementer): spend today per profile.
 	if issuesErr != nil {
 		return fmt.Errorf("gh issue list: %w", issuesErr)

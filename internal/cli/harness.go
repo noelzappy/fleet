@@ -90,8 +90,13 @@ func harnessVerify(cmd *cobra.Command, _ []string) error {
 	prompt := fmt.Sprintf("Run `%s` in this directory. Print exactly PASS or FAIL as the last line.", cfg.Gate.Command)
 	gateTimeout, _ := time.ParseDuration(cfg.Gate.Timeout) // validated by config.Load
 	agentTimeout := gateTimeout + 10*time.Minute           // the agent reads, runs the gate, and reports
+	out := signedOut(ctx, cfg.Harnesses)
 	for _, name := range sortedHarnessNames() {
 		h := cfg.Harnesses[name]
+		if out[name] {
+			fmt.Printf("%-14s %-12s %-10s %s\n", name, h.Kind, "signed-out", "SKIP — sign in (README › Signing in over SSH)")
+			continue
+		}
 		k, err := kindOf(h)
 		if err != nil {
 			return err
@@ -110,7 +115,7 @@ func harnessVerify(cmd *cobra.Command, _ []string) error {
 		case err == nil && strings.Contains(out, "PASS"):
 			status = "PASS"
 		}
-		fmt.Printf("%-14s %-12s %s\n", name, h.Kind, status)
+		fmt.Printf("%-14s %-12s %-10s %s\n", name, h.Kind, "signed-in", status)
 	}
 	return nil
 }

@@ -140,7 +140,7 @@ func panicCmd() *cobra.Command {
 		}
 		ctx := context.Background()
 		shell.Run(ctx, p.StopCmd(j...), nil)
-		shell.Run(ctx, `pkill -x claude; pkill -f "opencode run"; pkill -x agy; true`, nil)
+		shell.Run(ctx, `pkill -x claude; pkill -f "opencode run"; pkill -x agy; pkill -x codex; true`, nil)
 		fmt.Println("NOW, by hand:")
 		fmt.Println("  1. GitHub → Settings → Applications → " + cfg.GitHub.AppSlug + " → Suspend installation")
 		fmt.Println("  2. Rotate every key in ~/.config/fleet/env and provider dashboards; revoke the Multica PAT (Settings → API Token)")

@@ -32,7 +32,8 @@ const (
 	MetaConflict = "conflict_nudged"    // head sha the agent was told conflicts with the base branch
 	MetaAttrib   = "attribution_nudged" // head sha the agent was told carries an attribution trailer
 	MetaBody     = "body_nudged"        // PR number the agent was told has a non-conforming body
-	MetaRerun    = "rerun_of"           // id of the server-cancelled run fleet re-ran
+	MetaRerun    = "rerun_of"           // id of the run fleet re-ran (server-cancelled or escalated failure)
+	MetaFailEsc  = "failure_escalated"  // id of the failed run fleet escalated to GitHub
 )
 
 const (
@@ -67,6 +68,7 @@ type MIssue struct {
 	Attributed string // attribution_nudged
 	BodyNudged int    // body_nudged
 	RerunOf    string // rerun_of
+	FailureEsc string // failure_escalated
 	// Latest run, filled for issues that should be working (todo, in_progress).
 	LastRunID     string
 	LastRunStatus string
@@ -100,6 +102,8 @@ type State struct {
 	GH      []GHIssue
 	Multica []MIssue
 	PRs     []PR
+	// SignedOut holds harness names whose CLI isn't signed in; routing skips their profiles.
+	SignedOut map[string]bool
 }
 
 // Action is one thing to do. Exactly one field group is set.
@@ -131,6 +135,13 @@ func (a Action) String() string {
 		return fmt.Sprintf("rebase         #%d PR #%d %s → @%s", a.Issue.Number, a.PR.Number, a.PR.HeadSHA, a.Profile)
 	case "rerun":
 		return fmt.Sprintf("rerun          %s %s (run %s cancelled by server)", a.Multica.Kind, a.Multica.ID, a.Multica.LastRunID)
+	case "escalate-failure":
+		return fmt.Sprintf("escalate-fail  %s #%d run %s (%s) +%s", a.Multica.Kind, a.Issue.Number, a.Multica.LastRunID, a.Multica.Profile, a.Label)
+	case "retry":
+		if a.Profile != a.Multica.Profile {
+			return fmt.Sprintf("retry          %s #%d %s → %s (re-routed)", a.Multica.Kind, a.Issue.Number, a.Multica.Profile, a.Profile)
+		}
+		return fmt.Sprintf("retry          %s #%d → %s", a.Multica.Kind, a.Issue.Number, a.Profile)
 	case "close":
 		return fmt.Sprintf("close          %s %s (%s)", a.Multica.Kind, a.Multica.ID, a.Comment)
 	case "fix-body":
@@ -194,7 +205,7 @@ func Plan(f *config.Fleet, st State) []Action {
 		}
 		switch {
 		case !mirrored:
-			p, ok := routeImplementer(f, is)
+			p, ok := routeImplementer(f, is, st.SignedOut)
 			if ok {
 				out = append(out, Action{Kind: "create-task", Issue: is, Profile: p})
 			}
@@ -222,6 +233,51 @@ func Plan(f *config.Fleet, st State) []Action {
 			if m.PR != 0 && !openPRs[m.PR] {
 				out = append(out, Action{Kind: "close", Issue: byNum[m.Issue], Multica: m, Comment: fmt.Sprintf("PR #%d no longer open", m.PR)})
 			}
+		}
+	}
+
+	// A run that failed on the agent's side (signed-out CLI, exhausted quota, crash) is
+	// never retried silently: it's escalated to the GitHub issue with the error, once per
+	// failed run. When the owner removes the label, the work is retried, re-routed to a
+	// signed-in profile if the original one's harness is still signed out.
+	for _, m := range st.Multica {
+		if !AgentFailed(m) {
+			continue
+		}
+		is, ok := byNum[m.Issue]
+		if !ok || is.State != "OPEN" || has(is.Labels, L.Stuck) {
+			continue
+		}
+		if m.Kind == KindTask && task[m.Issue].ID != m.ID {
+			continue
+		}
+		if m.Kind == KindReview && !openPRs[m.PR] {
+			continue
+		}
+		labelled := hasAny(is.Labels, escalationLabels(L))
+		switch {
+		case m.LastRunID != m.FailureEsc && !labelled:
+			what := fmt.Sprintf("working on #%d", m.Issue)
+			if m.Kind == KindReview {
+				what = fmt.Sprintf("reviewing PR #%d", m.PR)
+			}
+			out = append(out, Action{Kind: "escalate-failure", Issue: is, Multica: m, Label: L.NeedsHuman,
+				Comment: fmt.Sprintf("The %s agent failed while %s (harness %s, run %s):\n\n```\n%s\n```\n\nIf the harness is signed out, sign it in on the box (README › Signing in over SSH). Then remove the `%s` label: fleet retries, re-routing to a signed-in profile if this one still isn't.",
+					m.Profile, what, f.Profiles[m.Profile].Harness, m.LastRunID, truncate(m.LastRunError, 600), L.NeedsHuman)})
+		case m.LastRunID == m.FailureEsc && !labelled && m.RerunOf != m.LastRunID && !paused:
+			p := m.Profile
+			if st.SignedOut[f.Profiles[p].Harness] {
+				var ok bool
+				if m.Kind == KindTask {
+					p, ok = routeImplementer(f, is, st.SignedOut)
+				} else {
+					p, ok = routeReviewer(f, task[m.Issue].Profile, m.PR, st.SignedOut)
+				}
+				if !ok {
+					continue // nothing signed in can take it yet
+				}
+			}
+			out = append(out, Action{Kind: "retry", Issue: is, Multica: m, Profile: p})
 		}
 	}
 
@@ -285,13 +341,13 @@ func Plan(f *config.Fleet, st State) []Action {
 				continue
 			}
 			if run := pr.Gate[0]; run.ID != m.NudgedRun {
-				p := fixerFor(f, m.Profile, run)
+				p := fixerFor(f, m.Profile, run, st.SignedOut)
 				out = append(out, Action{Kind: "nudge", Issue: is, Multica: m, PR: pr, Run: run, Profile: p,
 					Comment: fmt.Sprintf("@%s The gate failed on PR %s (attempt %d of %d). Failed jobs: %s. Fix it and push.", p, pr.URL, failures(pr.Gate), f.Routing.MaxGateAttempts, strings.Join(run.FailedJobs, ", "))})
 			}
 		}
 		if _, reviewed := review[pr.Number]; !reviewed && !paused {
-			if r, ok := routeReviewer(f, m.Profile, pr.Number); ok {
+			if r, ok := routeReviewer(f, m.Profile, pr.Number, st.SignedOut); ok {
 				out = append(out, Action{Kind: "create-review", Issue: is, Multica: m, PR: pr, Profile: r})
 			}
 		}
@@ -364,7 +420,7 @@ func IssueFromBranch(head string) int {
 // routeImplementer picks the implementer for the issue's wave. With several
 // candidates it spreads by issue number, which is deterministic and stateless;
 // it is not load-aware — Multica's per-agent concurrency queues the rest.
-func routeImplementer(f *config.Fleet, is GHIssue) (string, bool) {
+func routeImplementer(f *config.Fleet, is GHIssue, out map[string]bool) (string, bool) {
 	wave := ""
 	for _, l := range is.Labels {
 		if w := f.WaveForLabel(l); w != "" {
@@ -376,7 +432,7 @@ func routeImplementer(f *config.Fleet, is GHIssue) (string, bool) {
 		return "", false
 	}
 	c := f.ProfilesWhere(func(_ string, p config.Profile) bool {
-		return p.Role == config.RoleImplementer && p.Concurrency > 0 && contains(p.Waves, wave)
+		return p.Role == config.RoleImplementer && p.Concurrency > 0 && contains(p.Waves, wave) && !out[p.Harness]
 	})
 	if len(c) == 0 {
 		return "", false
@@ -386,10 +442,10 @@ func routeImplementer(f *config.Fleet, is GHIssue) (string, bool) {
 
 // routeReviewer picks a reviewer whose vendor differs from the implementer's when
 // cross_vendor_review is on. Spread by PR number.
-func routeReviewer(f *config.Fleet, implementer string, pr int) (string, bool) {
+func routeReviewer(f *config.Fleet, implementer string, pr int, out map[string]bool) (string, bool) {
 	impl := f.Profiles[implementer]
 	c := f.ProfilesWhere(func(_ string, p config.Profile) bool {
-		return p.Role == config.RoleReviewer && p.Concurrency > 0 && (!f.Routing.CrossVendorReview || p.Vendor != impl.Vendor)
+		return p.Role == config.RoleReviewer && p.Concurrency > 0 && (!f.Routing.CrossVendorReview || p.Vendor != impl.Vendor) && !out[p.Harness]
 	})
 	if len(c) == 0 {
 		return "", false
@@ -401,7 +457,7 @@ var lintJob = regexp.MustCompile(`(?i)lint|typecheck|type-check|format|prettier|
 
 // fixerFor returns the fixer when every failed job is lint/typecheck-shaped and
 // routing.fixer_only_lint is set; otherwise the implementer keeps the failure.
-func fixerFor(f *config.Fleet, implementer string, run GateRun) string {
+func fixerFor(f *config.Fleet, implementer string, run GateRun, out map[string]bool) string {
 	if !f.Routing.FixerOnlyLint || len(run.FailedJobs) == 0 {
 		return implementer
 	}
@@ -410,7 +466,9 @@ func fixerFor(f *config.Fleet, implementer string, run GateRun) string {
 			return implementer
 		}
 	}
-	c := f.ProfilesWhere(func(_ string, p config.Profile) bool { return p.Role == config.RoleFixer && p.Concurrency > 0 })
+	c := f.ProfilesWhere(func(_ string, p config.Profile) bool {
+		return p.Role == config.RoleFixer && p.Concurrency > 0 && !out[p.Harness]
+	})
 	if len(c) == 0 {
 		return implementer
 	}
@@ -515,4 +573,19 @@ func Stranded(m MIssue) bool {
 	return (m.Status == "todo" || m.Status == "in_progress") && !m.RunActive &&
 		m.LastRunStatus == "failed" && strings.Contains(m.LastRunError, "cancelled by server") &&
 		m.LastRunID != "" && m.LastRunID != m.RerunOf
+}
+
+// AgentFailed reports a Multica issue that should be working whose newest run failed on
+// the agent's side (anything but a server cancellation), with nothing running now.
+func AgentFailed(m MIssue) bool {
+	return (m.Status == "todo" || m.Status == "in_progress") && !m.RunActive &&
+		m.LastRunStatus == "failed" && m.LastRunID != "" && !strings.Contains(m.LastRunError, "cancelled by server")
+}
+
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

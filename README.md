@@ -200,10 +200,11 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 
 ### Harnesses
 
-A harness is one agent CLI. Several profiles share a harness with different models. Three harnesses cover every vendor:
+A harness is one agent CLI. Several profiles share a harness with different models. Four harnesses cover every vendor:
 
 - **`claude-code`** for Anthropic models on your Claude plan.
 - **`antigravity`** (`agy`) for Google models on your Google AI subscription.
+- **`codex`** for OpenAI models on your ChatGPT plan. Without a ChatGPT plan, skip it: OpenCode reaches OpenAI models too, billed per token.
 - **`opencode`** for everything else: DeepSeek, GLM, OpenAI and free models through [OpenCode Zen](https://opencode.ai) (`opencode/deepseek-v4-pro`, `opencode/glm-5.3`, the free `opencode/big-pickle`, …), or through your own provider keys. `opencode models` lists what's available.
 
 A profile's `vendor` is the model's maker, not the gateway: `opencode/glm-5.3` is vendor `zai`, so a Claude or Gemini reviewer still counts as cross-vendor. Free models usually come with rate limits and data-use terms; read them before pointing one at private code, and prefer them for fixers or overflow.
@@ -215,6 +216,11 @@ These are the kinds fleet supports, with invocations checked against the install
 | `claude-code` | `claude` | `npm i -g @anthropic-ai/claude-code` | `claude login` | `claude -p … --output-format text --allowedTools "Bash(<gate>)"` |
 | `opencode` | `opencode` | `npm i -g opencode-ai` | `opencode auth login` | `OPENCODE_CONFIG_CONTENT='{"permission":…}' opencode run …` (only the gate is allowed) |
 | `antigravity` | `agy` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` | run `agy` once interactively | `agy -p … --output-format text --dangerously-skip-permissions --print-timeout <gate timeout + 10m>` |
+| `codex` | `codex` | `npm i -g @openai/codex` | `codex login --device-auth` | `codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --ephemeral …` (no per-command allowlist; its sandbox blocks the network gates need) |
+
+**Sign-in awareness.** fleet checks each harness's sign-in state with the CLI's own command: `claude auth status` (`loggedIn`), `codex login status`, `opencode auth list` (credential count), and for agy the presence of its OAuth token file (never read) or `GEMINI_API_KEY`. Set `auth_check:` on a harness to override it, for example when a CLI authenticates through env vars. The check runs every sync tick, and a signed-out harness:
+- gets no new work: implementer, reviewer and fixer routing skip its profiles, and if nothing signed in can take an issue, it waits;
+- shows up in `fleet status` as `signed out: <harness>` and in `fleet harness verify` as `signed-out … SKIP`.
 
 **Antigravity CLI replaces Gemini CLI.** Google moved Gemini CLI users to Antigravity CLI. Since 18 June 2026, Gemini CLI no longer serves requests for Google AI Pro/Ultra subscribers or free individual use. A `kind: gemini-cli` harness is rejected with a pointer to `antigravity`. Notes for a fleet box:
 - **Sign-in over SSH:** run `agy` in tmux. On an SSH session it prints an authorization URL; open it on your own machine and paste the code back.
@@ -237,6 +243,7 @@ Every sign-in happens once, on the box, as the fleet user, in a normal SSH sessi
 | Claude Code | `claude` (or `claude login`) | open the printed URL, approve, paste the code back |
 | Antigravity | `agy` | open the printed URL, approve, paste the authorization code back (it waits 60 s) |
 | OpenCode | `opencode auth login` → OpenCode Zen (or another provider) | paste the API key from opencode.ai |
+| Codex | `codex login --device-auth` | open the printed URL, sign in with your ChatGPT account, enter the code |
 | Tailscale | printed by `fleet bootstrap` | open the link and approve the machine |
 | Multica | none with `orchestrator.owner_email` set | `orchestrator init` signs in over the API; without it, create a token in the UI and paste it |
 
@@ -334,6 +341,7 @@ More workers won't fix a failing loop.
 **Pausing:**
 - **Soft pause** (`fleet pause`) stops new dispatches while running sessions finish and open their PRs. `fleet resume` closes the pause issue. Use it for day-to-day stops.
 - **Multica mirrors GitHub.** Closing a GitHub issue (merging its PR) marks its Multica task done, and a merged or closed PR marks its review done. A run cancelled by a daemon restart is re-run once. Other things `fleet sync` handles for you: a PR that conflicts after another merge gets a rebase request, a commit with an agent attribution line gets an amend request, and a PR body missing `Closes #N` or `Model:` gets a fix request. The full rule table is in [docs/orchestrator-decision.md](docs/orchestrator-decision.md).
+- **Failed agent runs come to you.** When a run fails on the agent's side (a CLI that lost its sign-in, an exhausted quota, a crash), `fleet sync` adds `needs-human` to the GitHub issue with the error, once per failed run; nothing is retried silently. Fix the cause, remove the label, and the next tick retries, re-routing to a signed-in profile if the original harness is still signed out.
 - **Escalations round-trip through labels.** An agent that sets its Multica issue to `blocked` gets a `needs-*` label and its comment on the GitHub issue within one sync interval. Answer on GitHub, remove the label, and the next tick tells the agent to read your answer and continue.
 - **Hard pause** (`fleet pause --hard`) stops workers immediately. Use it before changing `AGENTS.md`, the issue template or the docs agents read: merge the change, then resume. Running sessions keep the version they started with.
 - **Kill** (`fleet kill <n>`) is for one runaway session. Afterwards, check that session's spend.
@@ -378,6 +386,8 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `issues sync` | implemented; not yet run against a live repo |
 | `up/pause/resume/kill/panic` | written; not yet verified on a box |
 | `digest` | prints `status` only; merged-in-24h, gate pass rate and Telegram delivery to do |
+| `codex` harness | implemented and installed on the box; smoke and verify pending a ChatGPT sign-in |
+| Sign-in awareness, failure escalation | ran live on the box: signed-out codex skipped by routing, its failed run escalated with the 401, label removal re-routed to impl-gemini |
 | GitHub App | not implemented: agents currently use the box's `gh` login (your account). Use a scoped App token before a client repo |
 
 Build order for the rest of v0.1: bootstrap → harnesses → orchestrator → GitHub → issues → kill/panic/status/digest → init end to end.

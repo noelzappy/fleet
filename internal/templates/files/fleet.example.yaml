@@ -26,6 +26,8 @@ machine:                        # the box is Linux (Ubuntu 24.04) or macOS; boot
 #   claude-code 2.1.163  GHSA-7835-87q9-rgvv (sandbox escape), GHSA-fg94-h982-f3mm (WebFetch exfiltration)
 #   opencode    1.1.10   GHSA-c83v-7274-4vgp (web UI XSS -> command execution), GHSA-vxw4-wv6m-9hhh
 #   antigravity 1.1.28   no published advisories; first release whose -p runs don't hang on plan approval
+#   codex       0.39.0   GHSA-w5fx-fh39-j5rw (sandbox bypass); also covers GHSA-xrxf-jgv3-qmrm (MCP config, <= 0.23.0)
+# auth_check (optional) overrides how fleet tells a harness is signed in; signed-out harnesses get no new work.
 # Re-check advisories when you run `fleet harness update` (weekly).
 harnesses:
   claude-code:
@@ -40,6 +42,12 @@ harnesses:
     install: curl -fsSL https://antigravity.google/cli/install.sh | bash
     login: agy                  # first interactive run signs in; over SSH it prints a URL, paste the code back
     smoke: cd /tmp && agy -p "Reply with exactly OK" --output-format text | tail -1 | grep -q OK
+  codex:                        # OpenAI Codex CLI — uses your ChatGPT plan
+    kind: codex
+    min_version: 0.39.0
+    install: npm i -g @openai/codex
+    login: codex login --device-auth
+    smoke: cd /tmp && codex exec --skip-git-repo-check --ephemeral "Reply with exactly OK and nothing else." | tail -1 | grep -q OK
   opencode:                     # every other model (DeepSeek, GLM, free models) through OpenCode Zen or your own provider keys
     kind: opencode
     min_version: 1.1.10
@@ -50,11 +58,12 @@ harnesses:
 # Profiles = harness + model + role. Profile names appear in PR bodies.
 # vendor is the model's maker, not the gateway (opencode/glm-5.3 is vendor zai). With
 # cross_vendor_review on, each implementer vendor needs a reviewer from a different vendor.
-# Model ids: `claude --help`, `agy models`, `opencode models`.
+# Model ids: `claude --help`, `agy models`, `opencode models`, `codex debug models`. Omit model to use the CLI's default.
 profiles:
   impl-sonnet:   { harness: claude-code, model: claude-sonnet-5,       role: implementer, vendor: anthropic, concurrency: 2, waves: [backend, notifications, mobile] }
   impl-gemini:   { harness: antigravity, model: gemini-3.1-pro-high,   role: implementer, vendor: google,    concurrency: 2, waves: [contracts, ui, admin, mobile] }
   impl-glm:      { harness: opencode,    model: opencode/glm-5.3,         role: implementer, vendor: zai,       concurrency: 1, waves: [contracts, admin] }
+  impl-codex:    { harness: codex,                                        role: implementer, vendor: openai,    concurrency: 1, waves: [backend, ui] }
   impl-deepseek: { harness: opencode,    model: opencode/deepseek-v4-pro, role: implementer, vendor: deepseek,  concurrency: 1, waves: [backend] }
   review-opus:   { harness: claude-code, model: claude-opus-5,         role: reviewer,    vendor: anthropic, concurrency: 1, waves: [] }
   review-gemini: { harness: antigravity, model: gemini-3.1-pro-high,   role: reviewer,    vendor: google,    concurrency: 1, waves: [] }

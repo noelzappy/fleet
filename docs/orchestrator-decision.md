@@ -132,7 +132,7 @@ Decision, 2026-09-16: every gap above that can be closed in code is closed by on
 
 ### The line
 
-fleet sync may decide **what is eligible**: ready labels, dependencies closed, not paused, attempts left, which profile an issue or review is assigned to. It never decides **when or on which worker** something runs, never manages sessions, and never retries agent work. The one exception is a run the Multica server cancelled during a daemon restart, which Multica itself doesn't retry; fleet re-runs it once. Multica's per-agent concurrency and queue do that. If a change to `internal/fleetsync` would make fleet pick *the next thing to run*, it is on the wrong side of the line.
+fleet sync may decide **what is eligible**: ready labels, dependencies closed, not paused, attempts left, which profile an issue or review is assigned to. It never decides **when or on which worker** something runs, never manages sessions, and never retries agent work on its own. Two exceptions, both bounded to once per run: a run the Multica server cancelled during a daemon restart (Multica doesn't retry it), and a failed run the owner explicitly released by removing its `needs-human` label. Multica's per-agent concurrency and queue do that. If a change to `internal/fleetsync` would make fleet pick *the next thing to run*, it is on the wrong side of the line.
 
 ### Ownership
 
@@ -160,6 +160,9 @@ Observe: every GitHub issue (closed ones decide dependencies), fleet's Multica i
 | Owner's commits | a commit message on the PR attributes the work to an agent, bot, model or tool | nudge once per head sha to amend and force-push (`attribution_nudged`); `pr-contract` blocks the merge; `orchestrator init` also turns off Multica's own Co-authored-by hook |
 | PR body | body lacks `Closes #N` or the `Model: <profile>` line | nudge once per PR (`body_nudged`) |
 | Closure | GitHub issue CLOSED (task) or PR no longer open (review) while the Multica issue isn't done | `multica issue status … done --no-start` |
+| Signed-out harness | a harness's `auth_check` fails this tick | its profiles are skipped when routing implementers, reviewers and fixers; an issue with no signed-in candidate waits |
+| Agent failure | newest run failed on the agent's side (not a server cancellation), nothing running | add `needs-human` + the error on the GitHub issue, once per run (`failure_escalated`) |
+| Retry after failure | the owner removed the label from an escalated failure | `multica issue rerun`, or re-assign to a signed-in profile (with a note naming the new `Model:`/`Reviewed-by:` signature) if the harness is still signed out; once per run (`rerun_of`) |
 | Stranded runs | a `todo`/`in_progress` issue whose newest run failed with "task cancelled by server" (a daemon restart) and nothing is running | `multica issue rerun`, once per cancelled run (`rerun_of`); skipped while paused. The only retry fleet does: agent errors are never re-run |
 | Cross-vendor review | open PR on a mirrored issue with no review issue yet | create a Multica review issue assigned to a reviewer of a different vendor; it posts one `gh pr review` whose body ends `Reviewed-by: <profile> (<vendor>)` |
 

@@ -51,6 +51,12 @@ const multica = "multica" // on PATH; orchestrator init installs it
 // dependencies), fleet's Multica issues, and open PRs with their gate runs.
 func observe(ctx context.Context) (fleetsync.State, error) {
 	var st fleetsync.State
+	st.SignedOut = signedOut(ctx, cfg.Harnesses)
+	for _, n := range sortedHarnessNames() {
+		if st.SignedOut[n] {
+			fmt.Fprintf(os.Stderr, "sync: harness %s is signed out; its profiles get no new work\n", n)
+		}
+	}
 	R := shell.Quote(cfg.Project.Repo)
 
 	out, err := shell.Output(ctx, "gh issue list -R "+R+" --state all --limit 1000 --json number,title,body,labels,state,url")
@@ -97,6 +103,7 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 				Attributed: str(md[fleetsync.MetaAttrib]),
 				BodyNudged: num(md[fleetsync.MetaBody]),
 				RerunOf:    str(md[fleetsync.MetaRerun]),
+				FailureEsc: str(md[fleetsync.MetaFailEsc]),
 			}
 			if m.Status == "todo" || m.Status == "in_progress" {
 				if err := latestRun(ctx, &m); err != nil {
@@ -281,6 +288,37 @@ func apply(ctx context.Context, a fleetsync.Action) error {
 			return err
 		}
 		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaRerun: a.Multica.LastRunID})
+	case "escalate-failure":
+		if err := shell.Run(ctx, fmt.Sprintf("gh issue edit -R %s %s --add-label %s", R, N, shell.Quote(a.Label)), nil); err != nil {
+			return err
+		}
+		if err := ghComment(ctx, N, a.Comment); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaFailEsc: a.Multica.LastRunID})
+	case "retry":
+		if a.Profile == a.Multica.Profile {
+			if err := shell.Run(ctx, multica+" issue rerun "+shell.Quote(a.Multica.ID)+" >/dev/null", nil); err != nil {
+				return err
+			}
+			return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaRerun: a.Multica.LastRunID})
+		}
+		// Re-routed: assign first (a comment on an issue still assigned to the signed-out
+		// agent would wake it for another failing run), then tell the new agent which name
+		// to sign with, since the description still names the original profile.
+		p := cfg.Profiles[a.Profile]
+		line := "`Model: " + a.Profile + "`"
+		if a.Multica.Kind == fleetsync.KindReview {
+			line = "`Reviewed-by: " + a.Profile + " (" + p.Vendor + ")`"
+		}
+		note := fmt.Sprintf("Re-routed from %s (its harness is signed out) to %s. Wherever this issue names %s, use %s instead: sign with %s.", a.Multica.Profile, a.Profile, a.Multica.Profile, a.Profile, line)
+		if err := setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaProfile: a.Profile, fleetsync.MetaRerun: a.Multica.LastRunID}); err != nil {
+			return err
+		}
+		if err := shell.Run(ctx, multica+" issue assign "+shell.Quote(a.Multica.ID)+" --to "+shell.Quote(a.Profile)+" >/dev/null", nil); err != nil {
+			return err
+		}
+		return multicaComment(ctx, a.Multica.ID, note)
 	case "close":
 		return shell.Run(ctx, multica+" issue status "+shell.Quote(a.Multica.ID)+" done --no-start >/dev/null", nil)
 	case "fix-body":
