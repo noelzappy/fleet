@@ -84,3 +84,14 @@ Each step: implement → `make test` → run it for real (locally or on a box) �
 - One logical change per commit. Explain *why* in the body, especially for anything touching shell strings, secrets or idempotency.
 - `make test` and `make lint` pass.
 - If a command's behaviour, flags or config changed, update the README in the same PR. The README and the CLI must agree.
+
+## Releasing
+
+Releases are cut by pushing a `v*` tag; `.github/workflows/release.yml` runs tests, then GoReleaser builds linux/darwin × amd64/arm64 archives, publishes the GitHub release, and updates the Homebrew formula in `noelzappy/homebrew-tap`.
+
+```bash
+make release TAG=v0.1.0     # tags and pushes; CI does the rest
+make snapshot               # local dry build into dist/ (needs goreleaser)
+```
+
+One-time setup: create the public `noelzappy/homebrew-tap` repo, and add a `HOMEBREW_TAP_GITHUB_TOKEN` secret to this repo (a fine-grained PAT with Contents: read/write on the tap repo only; the default `GITHUB_TOKEN` can't push to another repo).

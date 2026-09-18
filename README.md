@@ -126,12 +126,18 @@ Then check that `ssh fleet@<host>` works from your laptop before going further. 
 
 ### Install the binary
 
-On the fleet box, as the fleet user (pick the asset for your OS: `fleet-linux-amd64` or `fleet-darwin-arm64`):
+On macOS, with Homebrew:
+
+```bash
+brew install noelzappy/tap/fleet
+fleet version
+```
+
+On Linux, or without Homebrew, download the archive for your OS and architecture (`linux` or `darwin`, `amd64` or `arm64`) from the [latest release](https://github.com/noelzappy/fleet/releases/latest):
 
 ```bash
 mkdir -p ~/.local/bin
-curl -fsSL https://github.com/noelzappy/fleet/releases/latest/download/fleet-linux-amd64 -o ~/.local/bin/fleet
-chmod +x ~/.local/bin/fleet
+curl -fsSL https://github.com/noelzappy/fleet/releases/latest/download/fleet_<version>_linux_amd64.tar.gz | tar -xz -C ~/.local/bin fleet
 fleet version
 ```
 

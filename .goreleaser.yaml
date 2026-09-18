@@ -1,0 +1,42 @@
+version: 2
+
+project_name: fleet
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/fleet
+    binary: fleet
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/noelzappy/fleet/internal/cli.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "fleet_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md, fleet.example.yaml]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^chore:", "^test:"]
+
+brews:
+  - name: fleet
+    repository:
+      owner: noelzappy
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/noelzappy/fleet
+    description: Set up, run and supervise a fleet of coding agents against one GitHub repository
+    license: MIT
+    test: |
+      assert_match "fleet", shell_output("#{bin}/fleet version")

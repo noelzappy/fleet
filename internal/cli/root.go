@@ -70,6 +70,9 @@ func box() platform.Platform {
 	return p
 }
 
+// version is stamped at release time: -ldflags "-X github.com/noelzappy/fleet/internal/cli.version=v0.1.0".
+var version = "0.1.0-dev"
+
 func versionCmd() *cobra.Command {
-	return &cobra.Command{Use: "version", Run: func(c *cobra.Command, _ []string) { c.Println("fleet 0.1.0-dev") }}
+	return &cobra.Command{Use: "version", Run: func(c *cobra.Command, _ []string) { c.Println("fleet " + strings.TrimPrefix(version, "v")) }}
 }
