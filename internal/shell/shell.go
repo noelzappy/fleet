@@ -21,8 +21,22 @@ var Quiet bool
 
 func trace(format string, a ...any) {
 	if !Quiet {
-		fmt.Fprintf(os.Stderr, format, a...)
+		fmt.Fprint(os.Stderr, Redact(fmt.Sprintf(format, a...)))
 	}
+}
+
+var (
+	bearer = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	// Multica PATs (mul_, mcn_) and GitHub tokens; anything else secret should travel
+	// through a 0600 file or stdin, not the command line.
+	tokenLike = regexp.MustCompile(`\b(mul|mcn|ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{8,}`)
+)
+
+// Redact masks credentials in a command trace, which lands in terminals, scrollback,
+// systemd logs and pasted bug reports.
+func Redact(s string) string {
+	s = bearer.ReplaceAllString(s, "${1}***")
+	return tokenLike.ReplaceAllString(s, "${1}_***")
 }
 
 func Run(ctx context.Context, cmd string, env map[string]string) error {

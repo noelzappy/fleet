@@ -14,7 +14,7 @@ machine:                        # the box is Linux (Ubuntu 24.04) or macOS; boot
   node: "24"
   pnpm: "11"
   docker: true
-  tailscale: true               # dashboard is reachable over the tailnet only
+  tailscale: true               # false when running locally with dashboard_bind 127.0.0.1
   firewall: true                # ufw deny-incoming + SSH key-only auth
   always_on: true               # dedicated box; on macOS bootstrap disables sleep
   turbo_remote:                 # optional; omit if the repo doesn't use Turborepo
@@ -83,13 +83,14 @@ routing:
   cross_vendor_review: true     # reviewer vendor != implementer vendor
   max_gate_attempts: 3          # then the issue is labelled agent-stuck
   fixer_only_lint: true         # fixers retry lint/typecheck only; test failures go back to the implementer
+  quota_cooldown: 5h            # a harness whose run fails on a usage/rate limit gets no new work for this long
 
 # Multica runs the agents (see docs/orchestrator-decision.md). fleet sync mirrors
 # eligible GitHub issues into it and its state back as labels.
 orchestrator:
   kind: multica
   dir: ~/fleet/multica            # clone of multica-ai/multica; compose files live here
-  dashboard_bind: 100.64.0.1      # IP for the web UI (:3000) and API (:8080); your tailscale IP, never 0.0.0.0
+  dashboard_bind: 127.0.0.1       # IP for the web UI (:3000) and API (:8080), on this machine: 127.0.0.1 (this machine only) or your tailscale IP (reach it from your phone); never 0.0.0.0
   service_name: fleet-multica     # systemd units: fleet-multica (daemon), fleet-multica-sync.timer
   workspace: widgets              # Multica workspace; created by orchestrator init
   sync_interval: 2m

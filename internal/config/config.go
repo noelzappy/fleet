@@ -90,6 +90,10 @@ type Routing struct {
 	CrossVendorReview bool `yaml:"cross_vendor_review"`
 	MaxGateAttempts   int  `yaml:"max_gate_attempts"`
 	FixerOnlyLint     bool `yaml:"fixer_only_lint"`
+	// QuotaCooldown is how long a harness gets no new work after one of its runs failed on a
+	// usage or rate limit. Default 5h (a Claude session window); the run's error text rarely
+	// says when the limit resets.
+	QuotaCooldown string `yaml:"quota_cooldown"`
 }
 
 // Orchestrator is the execution backend. Only multica is implemented; see
@@ -97,7 +101,7 @@ type Routing struct {
 type Orchestrator struct {
 	Kind          string `yaml:"kind"`           // multica
 	Dir           string `yaml:"dir"`            // clone of multica-ai/multica (compose files); default ~/fleet/multica
-	DashboardBind string `yaml:"dashboard_bind"` // IP the web UI and API bind to; your tailscale IP, never 0.0.0.0
+	DashboardBind string `yaml:"dashboard_bind"` // IP the web UI and API bind to: 127.0.0.1 for this machine only, or your tailscale IP; never 0.0.0.0
 	ServiceName   string `yaml:"service_name"`   // systemd unit prefix; default fleet-multica
 	Workspace     string `yaml:"workspace"`      // Multica workspace name; default project.name
 	SyncInterval  string `yaml:"sync_interval"`  // how often `fleet sync` reconciles GitHub and Multica; default 2m
@@ -184,6 +188,9 @@ func (f *Fleet) ApplyDefaults() {
 	if f.Routing.MaxGateAttempts == 0 {
 		f.Routing.MaxGateAttempts = 3
 	}
+	if f.Routing.QuotaCooldown == "" {
+		f.Routing.QuotaCooldown = "5h"
+	}
 	if f.Gate.Command == "" {
 		f.Gate.Command = "pnpm gate"
 	}
@@ -258,6 +265,9 @@ func (f *Fleet) validate() error {
 	}
 	if _, err := time.ParseDuration(f.Gate.Timeout); err != nil {
 		return fmt.Errorf("gate.timeout: %w", err)
+	}
+	if d, err := time.ParseDuration(f.Routing.QuotaCooldown); f.Routing.QuotaCooldown != "" && (err != nil || d <= 0) {
+		return fmt.Errorf("routing.quota_cooldown %q: must be a positive duration like 5h", f.Routing.QuotaCooldown)
 	}
 	if f.GitHub.Auth != "gh" && f.GitHub.Auth != "app" {
 		return fmt.Errorf("github.auth %q: must be gh or app", f.GitHub.Auth)

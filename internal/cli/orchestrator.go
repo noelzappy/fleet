@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -47,6 +48,35 @@ type orchData struct {
 	OwnerEmail string
 }
 
+// checkBind rejects a dashboard_bind that would expose Multica publicly or can't work.
+// It must be an IPv4 address that exists on this machine, so a placeholder or a Tailscale
+// IP that isn't up fails here, with the machine's addresses, and not as a three-minute
+// wait for a server that was never reachable. Under --dry-run the machine may not be the
+// box, so only the shape is checked.
+func checkBind(bind string, dryRun bool) error {
+	ip := net.ParseIP(bind)
+	if ip == nil || ip.To4() == nil || ip.IsUnspecified() {
+		return fmt.Errorf("orchestrator.dashboard_bind must be a specific IPv4 address, never 0.0.0.0: 127.0.0.1 for this machine only, or your tailscale IP; got %q", bind)
+	}
+	if dryRun {
+		return nil
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return fmt.Errorf("list network addresses: %w", err)
+	}
+	var have []string
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil {
+			if n.IP.Equal(ip) {
+				return nil
+			}
+			have = append(have, n.IP.String())
+		}
+	}
+	return fmt.Errorf("orchestrator.dashboard_bind %s isn't an address on this machine (have %s). Use 127.0.0.1 for this machine only, or your tailscale IP once tailscale is up (`tailscale ip -4`)", bind, strings.Join(have, ", "))
+}
+
 func orchInit(cmd *cobra.Command, _ []string) error {
 	p, err := requireBox("orchestrator init")
 	if err != nil {
@@ -56,8 +86,8 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	O := cfg.Orchestrator
 	dir := shell.Quote(O.Dir)
 	bind := O.DashboardBind
-	if bind == "" || strings.Contains(bind, ":") || bind == "0.0.0.0" {
-		return fmt.Errorf("orchestrator.dashboard_bind must be an IP (your tailscale IP), got %q", bind)
+	if err := checkBind(bind, shell.DryRun); err != nil {
+		return err
 	}
 	compose := "docker compose -f docker-compose.selfhost.yml -f docker-compose.fleet.yml"
 
@@ -175,7 +205,7 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	}); err != nil {
 		return err
 	}
-	cmd.Printf("Multica is up: %s (over Tailscale). Next: fleet github init, fleet issues sync <file>, fleet status\n", app)
+	cmd.Printf("Multica is up: %s. Next: fleet github init, fleet issues sync <file>, fleet status\n", app)
 	return nil
 }
 
@@ -425,8 +455,14 @@ func ensureLogin(ctx context.Context, api, app, dir, compose string) error {
 	}
 	fmt.Fprintln(os.Stderr, "● multica login")
 	email := cfg.Orchestrator.OwnerEmail
+	tmp := config.ExpandPath("~/.config/fleet/multica-pat.tmp")
 	if email == "" {
-		return shell.Run(ctx, fmt.Sprintf(`echo "Open %s (over Tailscale) and sign up. With no mail server the sign-in code is in the backend log:"; echo "  cd %s && %s logs backend | grep -i code"; echo "Create a token under Settings → API Token and paste it below (set orchestrator.owner_email to skip this)."; multica login --token`, app, dir, compose), nil)
+		// Read the pasted token into a 0600 file so it never appears in a trace.
+		if err := shell.Run(ctx, fmt.Sprintf(`echo "Open %s and sign up. With no mail server the sign-in code is in the backend log:"; echo "  cd %s && %s logs backend | grep -i code"; echo "Create a token under Settings → API Token."; umask 077; read -rsp "Paste the token: " t; echo; printf %%s "$t" > %s`, app, dir, compose, shell.Quote(tmp)), nil); err != nil {
+			return err
+		}
+		defer os.Remove(tmp)
+		return tokenLogin(ctx, tmp)
 	}
 	post := func(path, body, bearer string) (map[string]any, error) {
 		cmd := "curl -fsS -X POST -H 'Content-Type: application/json'"
@@ -478,12 +514,25 @@ func ensureLogin(ctx context.Context, api, app, dir, compose string) error {
 		return fmt.Errorf("token creation returned no token")
 	}
 	// Keep the PAT out of the printed command line: hand it over through a 0600 file.
-	tmp := config.ExpandPath("~/.config/fleet/multica-pat.tmp")
 	if err := shell.WriteFile(tmp, []byte(pat), 0o600); err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	return shell.Run(ctx, `multica login --token "$(cat `+shell.Quote(tmp)+`)"`, nil)
+	return tokenLogin(ctx, tmp)
+}
+
+// tokenLogin signs the CLI in with the PAT in file. `multica login --token` saves the
+// token and then, when the server has no workspace yet, opens the browser and waits for
+// one to be created. fleet creates the workspace itself in the next step, so it stops
+// waiting once the token is saved; success is the CLI holding a token, not the exit code.
+func tokenLogin(ctx context.Context, file string) error {
+	lctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	_ = shell.Run(lctx, `exec multica login --token "$(cat `+shell.Quote(file)+`)"`, nil)
+	if !shell.DryRun && !shell.Check(ctx, authCheck) {
+		return fmt.Errorf("multica login --token did not save a token; sign in by hand with `multica login --token`, then re-run")
+	}
+	return nil
 }
 
 // ensureOwnerCommits turns off Multica's Co-authored-by hook for the workspace.

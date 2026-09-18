@@ -96,7 +96,7 @@ Every command is **idempotent**: running it again on a machine that's already se
 - **Ubuntu 24.04** VPS, always on. About 8 vCPU / 32 GB runs roughly six concurrent agents. `bootstrap` uses apt, ufw and systemd user units.
 - **macOS 14+ on Apple silicon** (a Mac mini that never sleeps). `bootstrap` uses Homebrew, OrbStack for Docker, `pmset` and launchd LaunchAgents. Two things it can't do for you: enable **automatic login** for the fleet user (LaunchAgents and the agent CLIs' keychain tokens need a logged-in session after a reboot), and per-interface firewall rules (macOS has none; fleet keeps the Multica ports on the Tailscale IP instead).
 
-Either way: a non-root user with `sudo` and **SSH key** login (`bootstrap` turns off SSH password authentication when `machine.firewall` is on), and a [Tailscale](https://tailscale.com) account if `machine.tailscale` is on. The Multica UI is only reachable over your tailnet. Docker (or OrbStack) runs Multica and your tests if they use containers.
+Either way: a non-root user with `sudo` and **SSH key** login (`bootstrap` turns off SSH password authentication when `machine.firewall` is on), and a [Tailscale](https://tailscale.com) account if `machine.tailscale` is on. Set `machine.tailscale: false` and `orchestrator.dashboard_bind: 127.0.0.1` to run the fleet on your own machine with no Tailscale (the UI is then reachable only from that machine); with Tailscale, the UI is only reachable over your tailnet. Docker (or OrbStack) runs Multica and your tests if they use containers.
 
 **Target repository:**
 - On GitHub, with branch protection on the default branch that requires your approval.
@@ -195,8 +195,8 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 | `harnesses` | agent CLIs: `kind` (`claude-code`, `opencode`, `antigravity`), `install`, `login`, `smoke`, `min_version`, `update`, `env`, `env_file` — see [Harnesses](#harnesses) |
 | `profiles` | `harness` + `model` + `role` (`implementer`, `reviewer`, `fixer`) + `vendor` + `concurrency` + `waves` |
 | `waves` | ordered work streams; each becomes a `wave:<name>` label and sets dispatch priority |
-| `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint` |
-| `orchestrator` | `kind` (`multica`), `dir` (its checkout, default `~/fleet/multica`), `dashboard_bind` (IP, your Tailscale address), `service_name` (default `fleet-multica`), `workspace`, `sync_interval` (default `2m`), `owner_email` |
+| `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint`, `quota_cooldown` (default `5h`) |
+| `orchestrator` | `kind` (`multica`), `dir` (its checkout, default `~/fleet/multica`), `dashboard_bind` (`127.0.0.1` for this machine only, or your Tailscale IP; must exist on the machine), `service_name` (default `fleet-multica`), `workspace`, `sync_interval` (default `2m`), `owner_email` |
 | `github` | GitHub App slug, app-id env var name, private key path, `required_checks` |
 | `notify` | Telegram secret *names* (GitHub Actions secrets) and the digest schedule |
 | `gate` | `command` (default `pnpm gate`), `timeout` (default `15m`), `workflow` (the Actions workflow that runs it on PRs, default `gate`) |
@@ -227,6 +227,8 @@ These are the kinds fleet supports, with invocations checked against the install
 **Sign-in awareness.** fleet checks each harness's sign-in state with the CLI's own command: `claude auth status` (`loggedIn`), `codex login status`, `opencode auth list` (credential count), and for agy the presence of its OAuth token file (never read) or `GEMINI_API_KEY`. Set `auth_check:` on a harness to override it, for example when a CLI authenticates through env vars. The check runs every sync tick, and a signed-out harness:
 - gets no new work: implementer, reviewer and fixer routing skip its profiles, and if nothing signed in can take an issue, it waits;
 - shows up in `fleet status` as `signed out: <harness>` and in `fleet harness verify` as `signed-out … SKIP`.
+
+**Quota cooldown.** A vendor that has hit a usage, session or rate limit is still signed in, so the check above passes and routing would keep handing it work that fails the same way. When a run fails with an error that reads like a limit (`usage limit`, `rate limit`, `quota`, `429`, `credit balance`…), fleet puts that harness on a cooldown for `routing.quota_cooldown` (default `5h`, roughly a Claude session window). During it the harness is treated like a signed-out one: no new work, and a retry re-routes to another vendor's profile. The failed run is still escalated to `needs-human` as usual. The cooldown is remembered in `~/.config/fleet/cooldowns.json`, and each failed run starts it once, so an old failure left on an issue doesn't re-arm it. The error text rarely says when the limit resets, hence a fixed window; set it to what your plan uses.
 
 **Antigravity CLI replaces Gemini CLI.** Google moved Gemini CLI users to Antigravity CLI. Since 18 June 2026, Gemini CLI no longer serves requests for Google AI Pro/Ultra subscribers or free individual use. A `kind: gemini-cli` harness is rejected with a pointer to `antigravity`. Notes for a fleet box:
 - **Sign-in over SSH:** run `agy` in tmux. On an SSH session it prints an authorization URL; open it on your own machine and paste the code back.
@@ -290,7 +292,7 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`. "box" m
 | `fleet github init` | Create/update all labels; write the `pr-contract` check and the Telegram notify workflow | anywhere |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |
 | `fleet sync` | One reconciliation tick: eligible GitHub issues → Multica; blocked/gate state → labels, nudges, reviews. The timer runs it; safe by hand | anywhere |
-| `fleet orchestrator init` | Install the Multica CLI and checkout, generate secrets, compose env/override bound to the Tailscale IP, start the server, log the CLI in (PAT), create workspace, repo and one agent per profile, install daemon + sync units | box |
+| `fleet orchestrator init` | Install the Multica CLI and checkout, generate secrets, compose env/override bound to `dashboard_bind`, start the server, log the CLI in (PAT), create workspace, repo and one agent per profile, install daemon + sync units | box |
 | `fleet orchestrator run` | Multica daemon in the foreground; the systemd unit calls this | box |
 | `fleet up` | Start the Multica server, daemon and sync timer | box |
 | `fleet pause` | **Soft:** open a `fleet-paused` issue. `sync` mirrors nothing new; in-flight work finishes | anywhere |
@@ -361,7 +363,7 @@ More workers won't fix a failing loop.
 - **Commits are the owner's.** Agents commit with the git identity configured on the box (set `git config --global user.name/user.email` to yours; `orchestrator init` checks it), never add `Co-authored-by`/"Generated with" trailers (the `AGENTS.md` scaffold forbids it and `pr-contract` fails PRs that carry one), and `orchestrator init` turns off Multica's own Co-authored-by hook. Attribution lives in the PR body's `Model:` line only.
 - **Agents use a GitHub App, not your personal token.** Permissions: contents write, pull requests write, issues write, metadata read, checks read. **No administration and no workflows**, so an agent can't approve, merge past protection, or edit CI to weaken the gate.
 - **Secrets** live only in `~/.config/fleet/env` and per-harness env files, both `0600`. Never in `fleet.yaml`, the repo or issues. Put a hard spend cap on every provider key that supports one.
-- **Network:** `bootstrap` denies all incoming traffic except SSH and the tailnet, and turns off SSH password auth. Bind the orchestrator dashboard to your Tailscale IP, never `0.0.0.0`.
+- **Network:** `bootstrap` denies all incoming traffic except SSH and the tailnet, and turns off SSH password auth. Bind the orchestrator dashboard to `127.0.0.1` or your Tailscale IP, never `0.0.0.0`; `orchestrator init` refuses an address that isn't on the machine.
 - **What vendors see.** Every model in the fleet reads your code, issues and specs, not just your data. Choose vendors with that in mind, and keep production credentials and real customer data out of any repo a fleet works on. Run with mocks.
 - **Only you write instructions.** Recent vulnerabilities in agent CLIs and their GitHub Actions (Claude Code before 2.1.163; `claude-code-action` before 1.0.74; Gemini CLI before 0.39.1) let untrusted repository or GitHub content reach an agent and leak keys. On a fleet-managed repo:
   - only the repo owner, and the owner's own agent sessions, write issue bodies;

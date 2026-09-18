@@ -131,7 +131,8 @@ func appCreate(ctx context.Context, listen, code string) error {
 
 // manifestHandshake serves a page that posts the manifest to GitHub, then waits for
 // GitHub to redirect back with a one-hour code. The page must be reachable from the
-// browser: on a box, bind to the Tailscale IP (ufw allows tailscale0).
+// browser: it binds to dashboard_bind (127.0.0.1 when the browser is on this machine, the
+// Tailscale IP when it isn't; ufw allows tailscale0), else 127.0.0.1.
 func manifestHandshake(ctx context.Context, listen, ownerType, owner string) (string, error) {
 	stateBytes := make([]byte, 16)
 	if _, err := rand.Read(stateBytes); err != nil {
@@ -177,7 +178,7 @@ func manifestHandshake(ctx context.Context, listen, ownerType, owner string) (st
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	defer srv.Close()
-	fmt.Fprintf(os.Stderr, "● open %s/ in your browser (over Tailscale) and click \"Create GitHub App\"\n", base)
+	fmt.Fprintf(os.Stderr, "● open %s/ in your browser and click \"Create GitHub App\"\n", base)
 	fmt.Fprintf(os.Stderr, "  if GitHub's redirect can't load, copy the code= value from its URL and run: fleet github app create --code <code>\n")
 	select {
 	case c := <-codes:

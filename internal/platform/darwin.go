@@ -68,7 +68,7 @@ func (Darwin) BootstrapSteps(m config.Machine, root string) []Step {
 			Step{
 				// The application firewall has no per-interface rules like ufw's; it blocks
 				// unsolicited inbound to apps that aren't allowed. Docker's published ports
-				// are bound to the Tailscale IP by fleet, so nothing listens publicly.
+				// are bound to orchestrator.dashboard_bind by fleet, so nothing listens publicly.
 				Name:  "application firewall on, stealth mode",
 				Check: "sudo " + fw + " --getglobalstate | grep -q enabled && sudo " + fw + " --getstealthmode | grep -q enabled",
 				Apply: "sudo " + fw + " --setglobalstate on && sudo " + fw + " --setstealthmode on",
@@ -87,7 +87,7 @@ func (Darwin) BootstrapSteps(m config.Machine, root string) []Step {
 func (Darwin) Notes(config.Machine) []string {
 	return []string{
 		"Enable automatic login for this user (System Settings → Users & Groups → Automatically log in as). LaunchAgents and the agent CLIs' keychain tokens need a logged-in session after a reboot.",
-		"macOS's firewall has no interface rules; the Multica UI/API are safe because fleet binds them to the Tailscale IP only. Don't publish other ports on 0.0.0.0.",
+		"macOS's firewall has no interface rules; the Multica UI/API are safe because fleet binds them to orchestrator.dashboard_bind only (127.0.0.1, or your Tailscale IP). Don't publish other ports on 0.0.0.0.",
 	}
 }
 

@@ -9,7 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/fleetsync"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/spf13/cobra"
@@ -159,7 +161,48 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 		}
 		st.PRs = append(st.PRs, pr)
 	}
+	applyCooldowns(&st, time.Now())
 	return st, nil
+}
+
+// cooldownFile remembers which harnesses are out of quota between ticks. It is state
+// fleet owns, not Multica's or GitHub's, so it lives beside the other fleet state.
+const cooldownFile = "~/.config/fleet/cooldowns.json"
+
+// applyCooldowns starts a cooldown for every harness a run just failed on for lack of
+// quota, then marks the cooling harnesses like signed-out ones so routing skips them and
+// retries re-route. Losing the file only costs one more failed run per harness.
+func applyCooldowns(st *fleetsync.State, now time.Time) {
+	path := config.ExpandPath(cooldownFile)
+	table := map[string]fleetsync.Cooldown{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &table)
+	}
+	d, err := time.ParseDuration(cfg.Routing.QuotaCooldown)
+	if err != nil || d <= 0 {
+		d = 5 * time.Hour // config.Load validates; this guards a hand-built config
+	}
+	table, changed := fleetsync.UpdateCooldowns(table, st.Multica, func(p string) string { return cfg.Profiles[p].Harness }, now, d)
+	if changed {
+		if b, err := json.MarshalIndent(table, "", "  "); err == nil {
+			if err := shell.WriteFile(path, b, 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "sync: can't save cooldowns: %v\n", err)
+			}
+		}
+	}
+	if st.SignedOut == nil {
+		st.SignedOut = map[string]bool{}
+	}
+	cooling := fleetsync.Cooling(table, now)
+	names := make([]string, 0, len(cooling))
+	for h := range cooling {
+		names = append(names, h)
+	}
+	sort.Strings(names)
+	for _, h := range names {
+		st.SignedOut[h] = true
+		fmt.Fprintf(os.Stderr, "sync: harness %s is out of quota until %s; its profiles get no new work\n", h, cooling[h].Local().Format("15:04 Mon"))
+	}
 }
 
 // gateRuns lists the gate workflow's runs on a branch, newest first, with failed
