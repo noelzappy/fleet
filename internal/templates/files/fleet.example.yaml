@@ -98,6 +98,7 @@ orchestrator:
 
 github:
   auth: app                     # app: agents use a scoped GitHub App (fleet github app create/use); gh: the box's personal login, scratch repos only
+  isolation: box                # box: the App takes over this machine (dedicated box); project: only this repo, your gh login and git setup stay (weaker boundary)
   app_slug: widgets-fleet       # name of the App fleet registers
   private_key_path: ~/.config/fleet/gh-app.pem
   required_checks: [gate, pr-contract]

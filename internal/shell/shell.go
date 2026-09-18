@@ -19,6 +19,20 @@ var DryRun bool
 // every gh call through the wrapper run it, and the trace would land in agent output.
 var Quiet bool
 
+// PathPrefix, when set, is put first on PATH for every command fleet runs. It is applied
+// inside the command, after the login shell has read the profile files (Homebrew's
+// shellenv there would otherwise push it behind /opt/homebrew/bin). fleet sets it to the
+// gh wrapper's directory in github.isolation: project, so fleet's and its agents' gh calls
+// carry the App token without touching the user's shell setup.
+var PathPrefix string
+
+func wrap(cmd string) string {
+	if PathPrefix == "" {
+		return cmd
+	}
+	return "export PATH=" + Quote(PathPrefix+":") + `"$PATH"; ` + cmd
+}
+
 func trace(format string, a ...any) {
 	if !Quiet {
 		fmt.Fprint(os.Stderr, Redact(fmt.Sprintf(format, a...)))
@@ -44,7 +58,7 @@ func Run(ctx context.Context, cmd string, env map[string]string) error {
 	if DryRun {
 		return nil
 	}
-	c := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	c := exec.CommandContext(ctx, "bash", "-lc", wrap(cmd))
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	c.Env = os.Environ()
 	for k, v := range env {
@@ -58,7 +72,7 @@ func Output(ctx context.Context, cmd string) (string, error) {
 	if DryRun {
 		return "", nil
 	}
-	c := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	c := exec.CommandContext(ctx, "bash", "-lc", wrap(cmd))
 	c.Stderr = os.Stderr
 	b, err := c.Output()
 	return strings.TrimSpace(string(b)), err
@@ -71,7 +85,7 @@ func OutputInput(ctx context.Context, cmd, stdin string) (string, error) {
 	if DryRun {
 		return "", nil
 	}
-	c := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	c := exec.CommandContext(ctx, "bash", "-lc", wrap(cmd))
 	c.Stdin = strings.NewReader(stdin)
 	c.Stderr = os.Stderr
 	b, err := c.Output()
@@ -86,7 +100,7 @@ func Check(ctx context.Context, cmd string) bool {
 		trace("→ (check) %s\n", cmd)
 		return false
 	}
-	return exec.CommandContext(ctx, "bash", "-lc", cmd).Run() == nil
+	return exec.CommandContext(ctx, "bash", "-lc", wrap(cmd)).Run() == nil
 }
 
 // Interactive is for commands that need a TTY (OAuth logins).
@@ -95,7 +109,7 @@ func Interactive(ctx context.Context, cmd string) error {
 	if DryRun {
 		return nil
 	}
-	c := exec.CommandContext(ctx, "bash", "-lc", cmd)
+	c := exec.CommandContext(ctx, "bash", "-lc", wrap(cmd))
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c.Run()
 }

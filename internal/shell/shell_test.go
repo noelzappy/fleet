@@ -1,7 +1,9 @@
 package shell
 
 import (
+	"context"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +45,21 @@ func TestRedact(t *testing.T) {
 		if got := Redact(in); got != want {
 			t.Errorf("Redact(%q)\n got  %q\n want %q", in, got, want)
 		}
+	}
+}
+
+func TestPathPrefixComesAfterTheLoginShell(t *testing.T) {
+	old := PathPrefix
+	defer func() { PathPrefix = old }()
+	PathPrefix = "/opt/fleet-test/bin"
+	// bash -l reads the user's profile, which may prepend its own dirs; the prefix must
+	// still win, and must not leak into a command without it.
+	out, err := Output(context.Background(), "echo $PATH")
+	if err != nil || !strings.HasPrefix(out, "/opt/fleet-test/bin:") {
+		t.Fatalf("PATH = %q, err %v", out, err)
+	}
+	PathPrefix = ""
+	if out, _ := Output(context.Background(), "echo $PATH"); strings.HasPrefix(out, "/opt/fleet-test/bin") {
+		t.Errorf("prefix leaked with PathPrefix unset: %q", out)
 	}
 }

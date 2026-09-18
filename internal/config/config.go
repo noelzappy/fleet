@@ -112,7 +112,14 @@ type GitHub struct {
 	// Auth is how agents and fleet reach GitHub: "gh" uses the box's gh login (a personal
 	// account, fine for a scratch repo); "app" uses short-lived tokens from a GitHub App
 	// with no administration or workflows permission. Default gh.
-	Auth           string   `yaml:"auth"`
+	Auth string `yaml:"auth"`
+	// Isolation is how far auth: app reaches into the machine. "box" (default) is for a
+	// dedicated fleet box: a global git credential helper, the gh wrapper first on every
+	// login shell's PATH, and the personal gh login removed. "project" is for a machine you
+	// also use yourself: the App's git helper applies to this repo's URL only, the wrapper is
+	// put first on PATH only for commands fleet runs, and your gh login and git setup stay.
+	// Weaker: agents run as you, so the App scope stops accidents, not a determined agent.
+	Isolation      string   `yaml:"isolation"`
 	AppSlug        string   `yaml:"app_slug"`   // name for the App that `fleet github app create` registers
 	AppIDEnv       string   `yaml:"app_id_env"` // deprecated: unused, the App's ids live in ~/.config/fleet/gh-app.json
 	PrivateKeyPath string   `yaml:"private_key_path"`
@@ -200,6 +207,9 @@ func (f *Fleet) ApplyDefaults() {
 	if f.GitHub.Auth == "" {
 		f.GitHub.Auth = "gh"
 	}
+	if f.GitHub.Isolation == "" {
+		f.GitHub.Isolation = "box"
+	}
 	if f.GitHub.AppSlug == "" {
 		f.GitHub.AppSlug = f.Project.Name + "-fleet"
 	}
@@ -265,6 +275,9 @@ func (f *Fleet) validate() error {
 	}
 	if _, err := time.ParseDuration(f.Gate.Timeout); err != nil {
 		return fmt.Errorf("gate.timeout: %w", err)
+	}
+	if iso := f.GitHub.Isolation; iso != "" && iso != "box" && iso != "project" {
+		return fmt.Errorf("github.isolation %q: must be box or project", iso)
 	}
 	if d, err := time.ParseDuration(f.Routing.QuotaCooldown); f.Routing.QuotaCooldown != "" && (err != nil || d <= 0) {
 		return fmt.Errorf("routing.quota_cooldown %q: must be a positive duration like 5h", f.Routing.QuotaCooldown)

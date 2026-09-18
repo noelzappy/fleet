@@ -197,7 +197,7 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 | `waves` | ordered work streams; each becomes a `wave:<name>` label and sets dispatch priority |
 | `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint`, `quota_cooldown` (default `5h`) |
 | `orchestrator` | `kind` (`multica`), `dir` (its checkout, default `~/fleet/multica`), `dashboard_bind` (`127.0.0.1` for this machine only, or your Tailscale IP; must exist on the machine), `service_name` (default `fleet-multica`), `workspace`, `sync_interval` (default `2m`), `owner_email` |
-| `github` | GitHub App slug, app-id env var name, private key path, `required_checks` |
+| `github` | `auth` (`gh` or `app`), `isolation` (`box` or `project`), GitHub App slug, private key path, `required_checks` |
 | `notify` | Telegram secret *names* (GitHub Actions secrets) and the digest schedule |
 | `gate` | `command` (default `pnpm gate`), `timeout` (default `15m`), `workflow` (the Actions workflow that runs it on PRs, default `gate`) |
 | `labels` | rename any label; unset ones use the defaults above |
@@ -229,6 +229,23 @@ These are the kinds fleet supports, with invocations checked against the install
 - shows up in `fleet status` as `signed out: <harness>` and in `fleet harness verify` as `signed-out … SKIP`.
 
 **Quota cooldown.** A vendor that has hit a usage, session or rate limit is still signed in, so the check above passes and routing would keep handing it work that fails the same way. When a run fails with an error that reads like a limit (`usage limit`, `rate limit`, `quota`, `429`, `credit balance`…), fleet puts that harness on a cooldown for `routing.quota_cooldown` (default `5h`, roughly a Claude session window). During it the harness is treated like a signed-out one: no new work, and a retry re-routes to another vendor's profile. The failed run is still escalated to `needs-human` as usual. The cooldown is remembered in `~/.config/fleet/cooldowns.json`, and each failed run starts it once, so an old failure left on an issue doesn't re-arm it. The error text rarely says when the limit resets, hence a fixed window; set it to what your plan uses.
+
+### GitHub App isolation
+
+With `github.auth: app`, agents push and open PRs with short-lived installation tokens from a GitHub App installed on the one repo. `github.isolation` sets how far that reaches into the machine:
+
+| | `box` (default) | `project` |
+|---|---|---|
+| For | a dedicated fleet box or a separate macOS user | your own machine, which you also use for other work |
+| git | one global credential helper for all of `github.com` | a helper attached to this repo's URL only (`credential.https://github.com/<repo>` and `….git`, with `useHttpPath`); every other repo keeps using your keychain or SSH |
+| `gh` wrapper | first on PATH in `~/.zprofile` and `~/.bash_profile` | first on PATH only for commands fleet runs (`sync`, the daemon and its agents) |
+| Your `gh` login | removed | kept |
+| `~/.git-credentials` | deleted | untouched |
+| `fleet sync` guard | refuses while a personal `gh` login exists | no such check |
+
+`project` is a weaker boundary. Agents run as your macOS user, so nothing stops one that goes looking from calling `/opt/homebrew/bin/gh`, using your keychain login or your SSH key. Agent CLIs may also reorder PATH in their own shells, so the wrapper isn't guaranteed to win there. The App scope prevents accidents, such as pushing to the wrong repo or holding more permission than needed. If the agents will run unattended on a repo that matters, use `box` on a separate macOS user or machine.
+
+`fleet github app unuse` removes what `use` added in either mode (the git stanzas, the wrapper and the profile blocks). It can't bring back a personal `gh` login that `box` mode removed: run `gh auth login`.
 
 **Antigravity CLI replaces Gemini CLI.** Google moved Gemini CLI users to Antigravity CLI. Since 18 June 2026, Gemini CLI no longer serves requests for Google AI Pro/Ultra subscribers or free individual use. A `kind: gemini-cli` harness is rejected with a pointer to `antigravity`. Notes for a fleet box:
 - **Sign-in over SSH:** run `agy` in tmux. On an SSH session it prints an authorization URL; open it on your own machine and paste the code back.
@@ -290,6 +307,7 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`. "box" m
 | `fleet harness verify` | Check `min_version`s, then a throwaway worktree where every harness runs the gate headless; PASS/FAIL table | box |
 | `fleet harness update [name]` | Run each CLI's self-update (`claude update`, `opencode upgrade`, `agy update`), then check `min_version`. Run weekly | anywhere |
 | `fleet github init` | Create/update all labels; write the `pr-contract` check and the Telegram notify workflow | anywhere |
+| `fleet github app create` / `use` / `unuse` | Register the GitHub App (manifest flow, install on the one repo), switch the machine or this project to it, undo that. See [GitHub App isolation](#github-app-isolation) | create: anywhere; use/unuse: box |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |
 | `fleet sync` | One reconciliation tick: eligible GitHub issues → Multica; blocked/gate state → labels, nudges, reviews. The timer runs it; safe by hand | anywhere |
 | `fleet orchestrator init` | Install the Multica CLI and checkout, generate secrets, compose env/override bound to `dashboard_bind`, start the server, log the CLI in (PAT), create workspace, repo and one agent per profile, install daemon + sync units | box |
@@ -390,13 +408,13 @@ v0.1 is done when a fresh box goes from `fleet init` to a running fleet working 
 | `harness add/login/verify` | ran for real on Linux and macOS: claude-code, opencode, antigravity install, pass smoke, and run the gate headless (PASS) |
 | `orchestrator init/run` (Multica) | ran end to end on Linux (systemd) and macOS (launchd): headless login, workspace, repo, agents; second run a no-op; UI/API reachable on the Tailscale IP only |
 | `sync` | planner table-tested; ran live on macOS and from the systemd timer on Linux: dispatch, dependency hold, cross-vendor review, nudge, escalate, rebase, owner-only commits, closure mirrored back to Multica |
-| `github init` | labels, `pr-contract` check and notify workflow; GitHub App manifest flow not implemented |
+| `github init` | labels, `pr-contract` check and notify workflow |
 | `issues sync` | implemented; not yet run against a live repo |
 | `up/pause/resume/kill/panic` | written; not yet verified on a box |
 | `digest` | prints `status` only; merged-in-24h, gate pass rate and Telegram delivery to do |
 | `codex` harness | implemented and installed on the box; smoke and verify pending a ChatGPT sign-in |
 | Sign-in awareness, failure escalation | ran live on the box: signed-out codex skipped by routing, its failed run escalated with the 401, label removal re-routed to impl-gemini |
-| GitHub App | not implemented: agents currently use the box's `gh` login (your account). Use a scoped App token before a client repo |
+| GitHub App | `create` ran live (manifest flow, install poll). `use` in `box` mode ran on a macOS machine; `project` mode and `unuse` are tested against a sandboxed git config only, not yet run for real |
 
 Build order for the rest of v0.1: bootstrap → harnesses → orchestrator → GitHub → issues → kill/panic/status/digest → init end to end.
 

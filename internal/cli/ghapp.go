@@ -41,10 +41,15 @@ func githubAppCmd() *cobra.Command {
 	create.Flags().StringVar(&code, "code", "", "finish with the ?code= from the redirect URL if the browser couldn't reach the handshake page")
 	use := &cobra.Command{
 		Use:   "use",
-		Short: "switch this box to the App: gh wrapper, git credential helper, remove the personal gh login, verify",
+		Short: "switch to the App: box mode takes over the machine; isolation: project confines it to this repo",
 		RunE:  func(cmd *cobra.Command, _ []string) error { return appUse(context.Background()) },
 	}
-	c.AddCommand(create, use)
+	unuse := &cobra.Command{
+		Use:   "unuse",
+		Short: "undo `use`: remove the git helper, gh wrapper and PATH blocks (project or box mode)",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return appUnuse(context.Background()) },
+	}
+	c.AddCommand(create, use, unuse)
 	return c
 }
 
@@ -386,18 +391,85 @@ func appUse(ctx context.Context) error {
 		}
 	}
 
-	const marker = "# fleet: gh via GitHub App"
-	helper := "!" + self + " -c " + abs + " github token --git-credential"
+	helper := credentialHelper(self, abs)
 	var steps []platform.Step
-	for _, prof := range p.ProfileFiles() {
-		block := fmt.Sprintf("\\n%s\\nexport PATH=\"%s:$PATH\"\\n", marker, strings.Replace(ghapp.WrapperDir, config.ExpandPath("~"), "$HOME", 1))
+	if projectScoped() {
+		steps = projectUseSteps(cfg.Project.Repo, helper, self, abs)
+	} else {
+		steps = boxUseSteps(p.ProfileFiles(), helper, self, abs, gh)
+	}
+	if _, err := runSteps(ctx, steps); err != nil {
+		return err
+	}
+	if projectScoped() {
+		fmt.Fprintf(os.Stderr, "GitHub App %s is in use for %s only. Your gh login and git setup are untouched; fleet's own commands and its agents get the App through the gh wrapper.\nAgents run as you, so this scopes accidents, not a determined agent (README › GitHub App). Restart the daemon: fleet pause --hard && fleet up\n", st.Slug, cfg.Project.Repo)
+	} else {
+		fmt.Fprintf(os.Stderr, "GitHub App %s is in use. Restart the daemon so agents start with the new PATH: fleet pause --hard && fleet up\n", st.Slug)
+	}
+	return nil
+}
+
+// projectScoped reports whether the App is confined to this project (github.isolation:
+// project) instead of taking over the whole box.
+func projectScoped() bool {
+	return cfg.GitHub.Auth == "app" && cfg.GitHub.Isolation == "project"
+}
+
+const profileMarker = "# fleet: gh via GitHub App"
+
+func credentialHelper(self, cfgAbs string) string {
+	return "!" + self + " -c " + cfgAbs + " github token --git-credential"
+}
+
+// repoCredentialKeys are the git config subsections that match a repo's HTTPS URL, with
+// and without .git: git matches URL paths by whole segments, so `…/repo` doesn't cover
+// `…/repo.git`.
+func repoCredentialKeys(repo string) []string {
+	return []string{"credential.https://github.com/" + repo, "credential.https://github.com/" + repo + ".git"}
+}
+
+// projectUseSteps confines the App to one repo. The helper is attached to that repo's URL
+// only (useHttpPath makes git match on the path; the empty `helper =` drops the keychain
+// helper for that URL), so every other repo keeps using your own credentials. Nothing is
+// removed: not your gh login, not ~/.git-credentials, not your shell profile.
+func projectUseSteps(repo, helper, self, cfgAbs string) []platform.Step {
+	var steps []platform.Step
+	for _, key := range repoCredentialKeys(repo) {
+		steps = append(steps, platform.Step{
+			Name: "git pushes to " + repo + " use App tokens (" + strings.TrimPrefix(key, "credential.https://github.com/") + ")",
+			Check: "test \"$(git config --global --get-all " + shell.Quote(key+".helper") + " | tail -1)\" = " + shell.Quote(helper) +
+				" && test \"$(git config --global --get " + shell.Quote(key+".useHttpPath") + ")\" = true",
+			Apply: "git config --global --unset-all " + shell.Quote(key+".helper") + "; git config --global --add " + shell.Quote(key+".helper") + " '' && git config --global --add " + shell.Quote(key+".helper") + " " + shell.Quote(helper) +
+				" && git config --global " + shell.Quote(key+".useHttpPath") + " true",
+		})
+	}
+	wrapper := filepath.Join(ghapp.WrapperDir, "gh")
+	return append(steps,
+		platform.Step{
+			Name:  "App token mints and is scoped",
+			Check: shell.Quote(self) + " -c " + shell.Quote(cfgAbs) + " github token >/dev/null",
+			Apply: shell.Quote(self) + " -c " + shell.Quote(cfgAbs) + " github token >/dev/null",
+		},
+		platform.Step{
+			Name:  "the gh wrapper reaches the repo as the App",
+			Check: "test \"$(" + shell.Quote(wrapper) + " api repos/" + repo + " -q .full_name 2>/dev/null)\" = " + shell.Quote(repo),
+			Apply: shell.Quote(wrapper) + " api repos/" + repo + " -q .full_name",
+		},
+	)
+}
+
+// boxUseSteps takes over the whole machine, for a dedicated fleet box.
+func boxUseSteps(profiles []string, helper, self, cfgAbs, gh string) []platform.Step {
+	var steps []platform.Step
+	for _, prof := range profiles {
+		block := fmt.Sprintf("\n%s\nexport PATH=\"%s:$PATH\"\n", profileMarker, strings.Replace(ghapp.WrapperDir, config.ExpandPath("~"), "$HOME", 1))
 		steps = append(steps, platform.Step{
 			Name:  "gh wrapper first on PATH (" + prof + ")",
-			Check: "grep -qxF " + shell.Quote(marker) + " " + prof,
+			Check: "grep -qxF " + shell.Quote(profileMarker) + " " + prof,
 			Apply: "printf " + shell.Quote(block) + " >> " + prof,
 		})
 	}
-	steps = append(steps,
+	return append(steps,
 		platform.Step{
 			Name:  "git pushes with App tokens",
 			Check: "git config --global --get-all credential.https://github.com.helper | tail -1 | grep -qxF " + shell.Quote(helper),
@@ -416,8 +488,8 @@ func appUse(ctx context.Context) error {
 		},
 		platform.Step{
 			Name:  "App token mints and is scoped",
-			Check: shell.Quote(self) + " -c " + shell.Quote(abs) + " github token >/dev/null",
-			Apply: shell.Quote(self) + " -c " + shell.Quote(abs) + " github token >/dev/null",
+			Check: shell.Quote(self) + " -c " + shell.Quote(cfgAbs) + " github token >/dev/null",
+			Apply: shell.Quote(self) + " -c " + shell.Quote(cfgAbs) + " github token >/dev/null",
 		},
 		platform.Step{
 			Name:  "gh (through the wrapper) reaches the repo as the App",
@@ -425,10 +497,49 @@ func appUse(ctx context.Context) error {
 			Apply: "gh api repos/" + cfg.Project.Repo + " -q .full_name",
 		},
 	)
-	if _, err := runSteps(ctx, steps); err != nil {
+}
+
+// unuseSteps removes what either mode of `github app use` added: the repo-scoped git
+// stanzas, the box-wide helper (only when it is fleet's), the PATH blocks in the profile
+// files and the gh wrapper. It can't restore a personal gh login that box mode removed.
+func unuseSteps(repo string, profiles []string) []platform.Step {
+	var steps []platform.Step
+	for _, key := range repoCredentialKeys(repo) {
+		steps = append(steps, platform.Step{
+			Name:  "git config for " + strings.TrimPrefix(key, "credential.https://github.com/") + " removed",
+			Check: "! git config --global --get-all " + shell.Quote(key+".helper") + " >/dev/null 2>&1",
+			Apply: "git config --global --remove-section " + shell.Quote(key),
+		})
+	}
+	steps = append(steps, platform.Step{
+		Name:  "box-wide git credential helper removed",
+		Check: "! git config --global --get-all credential.https://github.com.helper 2>/dev/null | grep -q 'github token --git-credential'",
+		Apply: "git config --global --unset-all credential.https://github.com.helper",
+	})
+	for _, prof := range profiles {
+		steps = append(steps, platform.Step{
+			Name:  "gh wrapper PATH block removed (" + prof + ")",
+			Check: "! grep -qxF " + shell.Quote(profileMarker) + " " + prof + " 2>/dev/null",
+			Apply: "perl -0pi -e " + shell.Quote(`s/\n`+profileMarker+`\nexport PATH=[^\n]*\n//g`) + " " + prof,
+		})
+	}
+	wrapper := filepath.Join(ghapp.WrapperDir, "gh")
+	return append(steps, platform.Step{
+		Name:  "gh wrapper removed",
+		Check: "! test -e " + shell.Quote(wrapper),
+		Apply: "rm -f " + shell.Quote(wrapper),
+	})
+}
+
+func appUnuse(ctx context.Context) error {
+	p, err := requireBox("github app unuse")
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "GitHub App %s is in use. Restart the daemon so agents start with the new PATH: fleet pause --hard && fleet up\n", st.Slug)
+	if _, err := runSteps(ctx, unuseSteps(cfg.Project.Repo, p.ProfileFiles())); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "GitHub App setup removed. If box mode removed your personal gh login, sign in again: gh auth login")
 	return nil
 }
 
@@ -444,6 +555,9 @@ func requireAppIsolation(ctx context.Context) error {
 	}
 	if st.InstallationID == 0 {
 		return fmt.Errorf("github.auth is app but the App isn't installed: run `fleet github app create`")
+	}
+	if projectScoped() {
+		return nil // a personal login is expected here; the App is confined to this repo instead
 	}
 	gh := st.RealGH
 	if gh == "" {

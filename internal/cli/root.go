@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/noelzappy/fleet/internal/config"
+	"github.com/noelzappy/fleet/internal/ghapp"
 	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/spf13/cobra"
@@ -29,8 +30,13 @@ func Root() *cobra.Command {
 				return nil
 			}
 			var err error
-			cfg, err = config.Load(cfgPath)
-			return err
+			if cfg, err = config.Load(cfgPath); err != nil {
+				return err
+			}
+			if projectScoped() {
+				shell.PathPrefix = ghapp.WrapperDir
+			}
+			return nil
 		},
 	}
 	root.PersistentFlags().StringVarP(&cfgPath, "config", "c", "fleet.yaml", "path to fleet.yaml")
