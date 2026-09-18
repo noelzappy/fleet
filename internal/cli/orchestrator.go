@@ -268,16 +268,40 @@ func serviceSpec(configPath string) platform.Spec {
 	}
 }
 
-// selfPath is this binary's absolute path (symlinks resolved), or ~/.local/bin/fleet.
+// selfPath is this binary's absolute path, or ~/.local/bin/fleet. It is written into the
+// git credential helper, the gh wrapper and the service units, so it must survive an
+// upgrade: symlinks are resolved, except that a Homebrew install maps back to its stable
+// <prefix>/bin/fleet and not the versioned Cellar directory that `brew upgrade` replaces.
 func selfPath() string {
 	exe, err := os.Executable()
-	if err == nil {
-		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			return real
-		}
+	if err != nil {
+		return config.ExpandPath("~/.local/bin/fleet")
+	}
+	if abs, err := filepath.Abs(exe); err == nil {
+		exe = abs
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return stablePath(exe, func(p string) bool {
+		a, e1 := os.Stat(p)
+		b, e2 := os.Stat(exe)
+		return e1 == nil && e2 == nil && os.SameFile(a, b)
+	})
+}
+
+// stablePath maps <prefix>/Cellar/<formula>/<version>/bin/<name> to <prefix>/bin/<name>
+// when that link points at the same binary; any other path is returned as is.
+func stablePath(exe string, sameFile func(string) bool) string {
+	const cellar = "/Cellar/"
+	i := strings.Index(exe, cellar)
+	if i < 0 {
 		return exe
 	}
-	return config.ExpandPath("~/.local/bin/fleet")
+	if link := exe[:i] + "/bin/" + filepath.Base(exe); sameFile(link) {
+		return link
+	}
+	return exe
 }
 
 // ensureWorkspace creates the Multica workspace named in fleet.yaml if missing and

@@ -30,3 +30,24 @@ func TestCheckBind(t *testing.T) {
 		}
 	}
 }
+
+func TestStablePath(t *testing.T) {
+	yes := func(string) bool { return true }
+	no := func(string) bool { return false }
+	tests := []struct {
+		name, exe string
+		same      func(string) bool
+		want      string
+	}{
+		{"homebrew arm64", "/opt/homebrew/Cellar/fleet/0.1.0/bin/fleet", yes, "/opt/homebrew/bin/fleet"},
+		{"linuxbrew", "/home/linuxbrew/.linuxbrew/Cellar/fleet/0.1.1/bin/fleet", yes, "/home/linuxbrew/.linuxbrew/bin/fleet"},
+		{"link points elsewhere", "/opt/homebrew/Cellar/fleet/0.1.0/bin/fleet", no, "/opt/homebrew/Cellar/fleet/0.1.0/bin/fleet"},
+		{"make install", "/Users/e/.local/bin/fleet", yes, "/Users/e/.local/bin/fleet"},
+		{"dev build", "/Users/e/workspace/fleet/bin/fleet", yes, "/Users/e/workspace/fleet/bin/fleet"},
+	}
+	for _, tt := range tests {
+		if got := stablePath(tt.exe, tt.same); got != tt.want {
+			t.Errorf("%s: stablePath(%q) = %q, want %q", tt.name, tt.exe, got, tt.want)
+		}
+	}
+}
