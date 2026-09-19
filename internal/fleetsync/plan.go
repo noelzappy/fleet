@@ -35,6 +35,9 @@ const (
 	MetaBody     = "body_nudged"        // PR number the agent was told has a non-conforming body
 	MetaRerun    = "rerun_of"           // id of the run fleet re-ran (server-cancelled or escalated failure)
 	MetaFailEsc  = "failure_escalated"  // id of the failed run fleet escalated to GitHub
+	MetaIdleRun  = "idle_nudged_run"    // id of the run whose idle end fleet reacted to
+	MetaIdleN    = "idle_nudges"        // how many idle nudges this task has had
+	MetaIdleEsc  = "idle_escalated"     // id of the run whose idle end fleet escalated to GitHub
 )
 
 const (
@@ -70,10 +73,15 @@ type MIssue struct {
 	BodyNudged int    // body_nudged
 	RerunOf    string // rerun_of
 	FailureEsc string // failure_escalated
+	// Idle-run bookkeeping (see Idle).
+	IdleNudgedRun string // idle_nudged_run
+	IdleNudges    int    // idle_nudges
+	IdleEsc       string // idle_escalated
 	// Latest run, filled for issues that should be working (todo, in_progress).
 	LastRunID     string
 	LastRunStatus string
 	LastRunError  string
+	LastRunEnded  time.Time // completed_at of the newest run; zero while it runs
 	RunActive     bool
 	LastComment   string // newest comment body; filled only for blocked issues
 }
@@ -109,6 +117,8 @@ type State struct {
 	// Cooling is when each out-of-quota harness's cooldown ends. Informational: SignedOut
 	// already carries the routing effect.
 	Cooling map[string]time.Time
+	// Now is when the tick observed; the idle-run rule measures its grace period from it.
+	Now time.Time
 	// Notes are observations worth telling the operator (a harness signed out, a cooldown).
 	// observe collects them instead of printing so a full-screen UI can show them.
 	Notes []string
@@ -150,6 +160,10 @@ func (a Action) String() string {
 			return fmt.Sprintf("retry          %s #%d %s → %s (re-routed)", a.Multica.Kind, a.Issue.Number, a.Multica.Profile, a.Profile)
 		}
 		return fmt.Sprintf("retry          %s #%d → %s", a.Multica.Kind, a.Issue.Number, a.Profile)
+	case "nudge-idle":
+		return fmt.Sprintf("nudge-idle     #%d run %s ended with no PR → @%s", a.Issue.Number, a.Multica.LastRunID, a.Profile)
+	case "escalate-idle":
+		return fmt.Sprintf("escalate-idle  #%d run %s (%s) +%s", a.Issue.Number, a.Multica.LastRunID, a.Multica.Profile, a.Label)
 	case "close":
 		return fmt.Sprintf("close          %s %s (%s)", a.Multica.Kind, a.Multica.ID, a.Comment)
 	case "fix-body":
@@ -286,6 +300,46 @@ func Plan(f *config.Fleet, st State) []Action {
 				}
 			}
 			out = append(out, Action{Kind: "retry", Issue: is, Multica: m, Profile: p})
+		}
+	}
+
+	// A run that ended cleanly without a PR is nudged once, then escalated to the owner.
+	// See idle.go. Once per run, so neither repeats every tick.
+	grace := IdleGrace(f)
+	hasPR := map[int]bool{}
+	for _, pr := range st.PRs {
+		if pr.Issue != 0 {
+			hasPR[pr.Issue] = true
+		}
+	}
+	for _, m := range st.Multica {
+		if m.Kind != KindTask || task[m.Issue].ID != m.ID || !Idle(m, hasPR[m.Issue], st.Now, grace) {
+			continue
+		}
+		is, ok := byNum[m.Issue]
+		if !ok || is.State != "OPEN" || has(is.Labels, L.Stuck) || hasAny(is.Labels, escalationLabels(L)) || paused {
+			continue
+		}
+		switch {
+		case m.LastRunID == m.IdleEsc: // escalated, and the owner has since cleared the label
+			if m.RerunOf == m.LastRunID {
+				continue
+			}
+			p := m.Profile
+			if st.SignedOut[f.Profiles[p].Harness] {
+				var ok bool
+				if p, ok = routeImplementer(f, is, st.SignedOut); !ok {
+					continue
+				}
+			}
+			out = append(out, Action{Kind: "retry", Issue: is, Multica: m, Profile: p})
+		case m.LastRunID == m.IdleNudgedRun: // this run was already handled
+		case m.IdleNudges < 1:
+			out = append(out, Action{Kind: "nudge-idle", Issue: is, Multica: m, Profile: m.Profile,
+				Comment: idleNudgeText(m.Profile, f.Gate.Command)})
+		default:
+			out = append(out, Action{Kind: "escalate-idle", Issue: is, Multica: m, Label: L.NeedsHuman,
+				Comment: idleEscalationText(m.Profile, m.IdleNudges+1, m.LastRunEnded, L.NeedsHuman)})
 		}
 	}
 

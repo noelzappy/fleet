@@ -396,3 +396,38 @@ func TestLogFollowsTheTail(t *testing.T) {
 		t.Error("a following log has nothing to resume")
 	}
 }
+
+func TestIdleRowExplainsWhatHappensNext(t *testing.T) {
+	f := watchFleet()
+	now := time.Date(2026, 9, 19, 14, 30, 0, 0, time.UTC)
+	ended := now.Add(-11 * time.Minute)
+	task := func(mut func(*fleetsync.MIssue)) fleetsync.State {
+		m := fleetsync.MIssue{Kind: fleetsync.KindTask, Issue: 7, Profile: "impl", Status: "in_progress",
+			LastRunID: "r1", LastRunStatus: "completed", LastRunEnded: ended}
+		if mut != nil {
+			mut(&m)
+		}
+		return fleetsync.State{Now: now, GH: []fleetsync.GHIssue{{Number: 7, State: "OPEN", Title: "t", Labels: []string{"wave:backend"}}}, Multica: []fleetsync.MIssue{m}}
+	}
+	cases := []struct {
+		name string
+		mut  func(*fleetsync.MIssue)
+		why  string
+	}{
+		{"first idle end", nil, "reminds it once"},
+		{"handled, awaiting the next run", func(m *fleetsync.MIssue) { m.IdleNudgedRun, m.IdleNudges = "r1", 1 }, "ended 11m0s ago with no PR"},
+		{"ended again after a reminder", func(m *fleetsync.MIssue) { m.LastRunID, m.IdleNudgedRun, m.IdleNudges = "r2", "r1", 1 }, "next tick escalates"},
+		{"escalated", func(m *fleetsync.MIssue) { m.IdleEsc = "r1" }, "Remove the needs-human label"},
+	}
+	for _, c := range cases {
+		rows := buildIssueRows(f, task(c.mut))
+		if len(rows) != 1 || rows[0].State != "idle · no PR" || rows[0].Tone != toneBad || !strings.Contains(rows[0].Why, c.why) {
+			t.Errorf("%s: %+v, want an idle row whose reason contains %q", c.name, rows, c.why)
+		}
+	}
+	// Within the grace period it is just queued work, not a problem.
+	fresh := task(func(m *fleetsync.MIssue) { m.LastRunEnded = now.Add(-time.Minute) })
+	if rows := buildIssueRows(f, fresh); rows[0].State == "idle · no PR" {
+		t.Errorf("flagged idle inside the grace period: %+v", rows[0])
+	}
+}

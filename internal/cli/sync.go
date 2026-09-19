@@ -63,6 +63,7 @@ const multica = "multica" // on PATH; orchestrator init installs it
 // dependencies), fleet's Multica issues, and open PRs with their gate runs.
 func observe(ctx context.Context, persist bool) (fleetsync.State, error) {
 	var st fleetsync.State
+	st.Now = time.Now()
 	st.SignedOut = signedOut(ctx, cfg.Harnesses)
 	for _, n := range sortedHarnessNames() {
 		if st.SignedOut[n] {
@@ -116,6 +117,10 @@ func observe(ctx context.Context, persist bool) (fleetsync.State, error) {
 				BodyNudged: num(md[fleetsync.MetaBody]),
 				RerunOf:    str(md[fleetsync.MetaRerun]),
 				FailureEsc: str(md[fleetsync.MetaFailEsc]),
+
+				IdleNudgedRun: str(md[fleetsync.MetaIdleRun]),
+				IdleNudges:    num(md[fleetsync.MetaIdleN]),
+				IdleEsc:       str(md[fleetsync.MetaIdleEsc]),
 			}
 			if m.Status == "todo" || m.Status == "in_progress" {
 				if err := latestRun(ctx, &m); err != nil {
@@ -262,6 +267,9 @@ func latestRun(ctx context.Context, m *fleetsync.MIssue) error {
 		}
 		if i == 0 {
 			m.LastRunID, m.LastRunStatus, m.LastRunError = str(r["id"]), str(r["status"]), str(r["error"])
+			if t, err := time.Parse(time.RFC3339, str(r["completed_at"])); err == nil {
+				m.LastRunEnded = t
+			}
 		}
 	}
 	return nil
@@ -342,6 +350,20 @@ func apply(ctx context.Context, a fleetsync.Action) error {
 			return err
 		}
 		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaRerun: a.Multica.LastRunID})
+	case "nudge-idle":
+		if err := multicaComment(ctx, a.Multica.ID, a.Comment); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{
+			fleetsync.MetaIdleRun: a.Multica.LastRunID, fleetsync.MetaIdleN: strconv.Itoa(a.Multica.IdleNudges + 1)})
+	case "escalate-idle":
+		if err := shell.Run(ctx, fmt.Sprintf("gh issue edit -R %s %s --add-label %s", R, N, shell.Quote(a.Label)), nil); err != nil {
+			return err
+		}
+		if err := ghComment(ctx, N, a.Comment); err != nil {
+			return err
+		}
+		return setMeta(ctx, a.Multica.ID, map[string]string{fleetsync.MetaIdleEsc: a.Multica.LastRunID})
 	case "escalate-failure":
 		if err := shell.Run(ctx, fmt.Sprintf("gh issue edit -R %s %s --add-label %s", R, N, shell.Quote(a.Label)), nil); err != nil {
 			return err

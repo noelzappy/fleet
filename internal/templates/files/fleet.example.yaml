@@ -83,6 +83,7 @@ routing:
   cross_vendor_review: true     # reviewer vendor != implementer vendor
   max_gate_attempts: 3          # then the issue is labelled agent-stuck
   fixer_only_lint: true         # fixers retry lint/typecheck only; test failures go back to the implementer
+  idle_grace: 5m                # a run that ends with no PR is reminded once after this, then escalated to you
   quota_cooldown: 5h            # a harness whose run fails on a usage/rate limit gets no new work for this long
 
 # Multica runs the agents (see docs/orchestrator-decision.md). fleet sync mirrors

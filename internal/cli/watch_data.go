@@ -183,6 +183,9 @@ func buildIssueRows(f *config.Fleet, st fleetsync.State) []issueRow {
 			row.State, row.Tone = "human only", toneDim
 		case mirrored && fleetsync.AgentFailed(m):
 			row.State, row.Tone = "agent failed", toneBad
+		case mirrored && fleetsync.Idle(m, hasPR, st.Now, fleetsync.IdleGrace(f)):
+			row.State, row.Tone = "idle · no PR", toneBad
+			row.Why = idleWhy(m, st.Now)
 		case hasPR && gate == toneBad:
 			row.State, row.Tone = "gate failing", toneBad
 		case mirrored && m.RunActive:
@@ -302,4 +305,18 @@ func tailFile(path string, max int64) string {
 		}
 	}
 	return s
+}
+
+// idleWhy says what fleet will do about an agent that ended its run without a PR.
+func idleWhy(m fleetsync.MIssue, now time.Time) string {
+	ago := now.Sub(m.LastRunEnded).Round(time.Minute)
+	switch {
+	case m.LastRunID == m.IdleEsc:
+		return fmt.Sprintf("ended %s ago with no PR; escalated to you. Remove the needs-human label to give it another run", ago)
+	case m.IdleNudges >= 1 && m.LastRunID != m.IdleNudgedRun:
+		return fmt.Sprintf("ended %s ago with no PR, after a reminder; the next tick escalates it to you", ago)
+	case m.IdleNudges >= 1:
+		return fmt.Sprintf("ended %s ago with no PR", ago)
+	}
+	return fmt.Sprintf("ended %s ago with no PR; the next tick reminds it once, then escalates to you", ago)
 }

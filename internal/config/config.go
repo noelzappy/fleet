@@ -94,6 +94,9 @@ type Routing struct {
 	// usage or rate limit. Default 5h (a Claude session window); the run's error text rarely
 	// says when the limit resets.
 	QuotaCooldown string `yaml:"quota_cooldown"`
+	// IdleGrace is how long a run may end cleanly with no PR before fleet reminds the agent
+	// (once), then escalates. Default 5m.
+	IdleGrace string `yaml:"idle_grace"`
 }
 
 // Orchestrator is the execution backend. Only multica is implemented; see
@@ -195,6 +198,9 @@ func (f *Fleet) ApplyDefaults() {
 	if f.Routing.MaxGateAttempts == 0 {
 		f.Routing.MaxGateAttempts = 3
 	}
+	if f.Routing.IdleGrace == "" {
+		f.Routing.IdleGrace = "5m"
+	}
 	if f.Routing.QuotaCooldown == "" {
 		f.Routing.QuotaCooldown = "5h"
 	}
@@ -278,6 +284,9 @@ func (f *Fleet) validate() error {
 	}
 	if iso := f.GitHub.Isolation; iso != "" && iso != "box" && iso != "project" {
 		return fmt.Errorf("github.isolation %q: must be box or project", iso)
+	}
+	if d, err := time.ParseDuration(f.Routing.IdleGrace); f.Routing.IdleGrace != "" && (err != nil || d <= 0) {
+		return fmt.Errorf("routing.idle_grace %q: must be a positive duration like 5m", f.Routing.IdleGrace)
 	}
 	if d, err := time.ParseDuration(f.Routing.QuotaCooldown); f.Routing.QuotaCooldown != "" && (err != nil || d <= 0) {
 		return fmt.Errorf("routing.quota_cooldown %q: must be a positive duration like 5h", f.Routing.QuotaCooldown)
