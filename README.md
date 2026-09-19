@@ -232,7 +232,7 @@ These are the kinds fleet supports, with invocations checked against the install
 
 ### Watching the fleet
 
-`fleet watch` is a full-screen dashboard that refreshes every `--interval` (default 10s; each refresh makes several `gh` and `multica` calls). It is read-only, and it uses the same observation and planner as `fleet sync`, so what it shows is what the reconciler sees:
+`fleet watch` is a full-screen dashboard that refreshes every `--interval` (default 10s; each refresh makes several `gh` and `multica` calls). The board is read-only, and it uses the same observation and planner as `fleet sync`, so what it shows is what the reconciler sees:
 
 - **Header:** daemon and sync-timer state, whether the fleet is paused, and each harness as signed in, signed out, or out of quota until a time.
 - **Issues:** what needs you sorts first (stuck, `needs-*`, agent failed, gate failing), then active work, then the queue. A ready issue that isn't being dispatched says why underneath: no wave label, a dependency still open, no profile serves the wave, or every serving harness is signed out or cooling down.
@@ -240,7 +240,14 @@ These are the kinds fleet supports, with invocations checked against the install
 - **Next sync tick:** exactly what `fleet sync` would do now.
 - **Activity:** the tail of the sync log (or the daemon's, with `l`). Command traces are hidden until you press `v`.
 
-Keys: `tab` switch pane, `↑ ↓` / `j k` scroll, `g` / `G` top / bottom (`G` on the log resumes following the tail), `z` zoom a pane, `r` refresh, `?` help, `q` quit. `fleet watch --once` prints one plain snapshot (also what you get when stdout isn't a terminal), which is the thing to paste into an issue.
+Keys: `tab` switch pane, `↑ ↓` / `j k` move the cursor in Issues (scroll elsewhere), `g` / `G` top / bottom (`G` on the log resumes following the tail), `enter` open the task under the cursor, `z` zoom a pane, `r` refresh, `?` help, `q` quit.
+
+**A task.** `enter` on an issue opens its task view: the agent's runs (with errors), recent comments (yours labelled `you`), the PR and its gate, and what the agent left in its worktree (branch, uncommitted files, last commits). Below it is a conversation box with two modes, switched with `tab`:
+
+- **ask** sends your question, plus the context on screen (bounded to about 12 KB), to a headless model with its tools turned off (`claude -p --tools ""`, or `codex exec --sandbox read-only` when claude-code is signed out). It can only answer in text: it can't read files, run commands or change anything, and it runs from a scratch directory. The answer comes from what fleet shows, so it says what's missing rather than guessing. It uses your claude-code or codex sign-in, so it costs what a short prompt costs there, and the issue text and comments are sent to that vendor, as they already are for the agents.
+- **tell** posts your message as a comment on the task's Multica issue, addressed to the agent (`@impl-gemini Follow-up from the owner…`). A comment wakes the agent, which costs a run, so fleet shows what it will send and waits for `enter` again (`esc` cancels). A task the agent had blocked on goes back to `todo`, as when you answer on GitHub. You can't tell an issue that hasn't been dispatched or a task that is done; you can still ask about them.
+
+`esc` leaves the task. The conversation isn't saved. `fleet watch --once` prints one plain snapshot (also what you get when stdout isn't a terminal), which is the thing to paste into an issue.
 
 `fleet sync` reports the same "ready but not dispatched" reasons in its log, so a silently ignored `agent-ready` label no longer stays silent.
 
@@ -323,7 +330,7 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`. "box" m
 | `fleet harness verify` | Check `min_version`s, then a throwaway worktree where every harness runs the gate headless; PASS/FAIL table | box |
 | `fleet harness update [name]` | Run each CLI's self-update (`claude update`, `opencode upgrade`, `agy update`), then check `min_version`. Run weekly | anywhere |
 | `fleet github init` | Create/update all labels; write the `pr-contract` check and the Telegram notify workflow | anywhere |
-| `fleet watch` | Live, read-only terminal dashboard: issues, PRs, agents, harness health, what the next `sync` tick will do, and the activity log. `--interval` (default 10s), `--once` for one plain snapshot. See [Watching the fleet](#watching-the-fleet) | box |
+| `fleet watch` | Live terminal dashboard: issues, PRs, agents, harness health, what the next `sync` tick will do, and the activity log. The board is read-only; `enter` opens a task where you can ask about it or tell its agent something (asks first). `--interval` (default 10s), `--once` for one plain snapshot. See [Watching the fleet](#watching-the-fleet) | box |
 | `fleet github app import` | Adopt an App that already exists from its App ID and a private key (lost key or state, or an App you registered by hand). Verifies the key with GitHub, refuses forbidden permissions, then finds or waits for the install | anywhere |
 | `fleet github app create` / `use` / `unuse` | Register the GitHub App (manifest flow, install on the one repo), switch the machine or this project to it, undo that. See [GitHub App isolation](#github-app-isolation) | create: anywhere; use/unuse: box |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |

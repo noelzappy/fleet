@@ -22,6 +22,10 @@ type harnessKind struct {
 	// gateRun returns a non-interactive invocation whose only shell permission is the
 	// gate command. timeout bounds the whole agent run.
 	gateRun func(prompt, gate string, timeout time.Duration) string
+	// ask returns a non-interactive invocation that can only answer in text: no shell, no
+	// file access, nothing to approve. `fleet watch` uses it to answer questions about a
+	// task. nil for a CLI with no flag that turns its tools off.
+	ask func(prompt string) string
 }
 
 var harnessKinds = map[string]harnessKind{
@@ -35,6 +39,10 @@ var harnessKinds = map[string]harnessKind{
 		gateRun: func(p, gate string, _ time.Duration) string {
 			return "claude -p " + shell.Quote(p) + " --output-format text --allowedTools " +
 				shell.Quote("Bash("+gate+")") + " " + shell.Quote("Bash("+gate+" *)")
+		},
+		// --tools "" removes every built-in tool; no session is saved.
+		ask: func(p string) string {
+			return "claude -p " + shell.Quote(p) + " --tools '' --no-session-persistence --disable-slash-commands --output-format text"
 		},
 	},
 	// opencode 1.18.x: `run` is non-interactive. OPENCODE_CONFIG_CONTENT layers an inline
@@ -78,6 +86,10 @@ var harnessKinds = map[string]harnessKind{
 		auth: "codex login status >/dev/null 2>&1",
 		gateRun: func(p, _ string, _ time.Duration) string {
 			return "codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --ephemeral " + shell.Quote(p)
+		},
+		// A read-only sandbox: it may read files but cannot write or reach the network.
+		ask: func(p string) string {
+			return "codex exec --sandbox read-only --skip-git-repo-check --ephemeral " + shell.Quote(p)
 		},
 	},
 }

@@ -136,7 +136,7 @@ func TestRenderFitsTheTerminal(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {120, 40}, {200, 60}, {60, 20}, {100, 12}} {
 		for _, zoom := range []bool{false, true} {
 			v := viewState{W: size[0], H: size[1], Zoom: zoom, Focus: paneIssues, Interval: 10 * time.Second}
-			out := render(s, v, plain(), false) + "\n" + footer(plain(), v)
+			out := render(s, &v, plain(), false) + "\n" + footer(plain(), &v)
 			lines := strings.Split(out, "\n")
 			if size[1] >= 20 && len(lines) > size[1] {
 				t.Errorf("%dx%d zoom=%v: %d lines, terminal has %d", size[0], size[1], zoom, len(lines), size[1])
@@ -153,7 +153,7 @@ func TestRenderFitsTheTerminal(t *testing.T) {
 func TestRenderContent(t *testing.T) {
 	s := syntheticSnapshot()
 	v := viewState{W: 120, H: 40, Interval: 10 * time.Second}
-	out := render(s, v, plain(), false)
+	out := render(s, &v, plain(), false)
 	for _, want := range []string{"widgets", "o/widgets", "daemon ● active", "cx signed out", "Issues (40)", "Pull requests (1)", "Next sync tick", "Activity · sync log", "↳ no wave label"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard is missing %q:\n%s", want, out)
@@ -164,38 +164,74 @@ func TestRenderContent(t *testing.T) {
 	}
 	v.Verbose = true
 	v.Zoom, v.Focus = true, paneLog
-	if out := render(s, v, plain(), false); !strings.Contains(out, "→ curl trace") {
+	if out := render(s, &v, plain(), false); !strings.Contains(out, "→ curl trace") {
 		t.Error("verbose should show the traces")
 	}
 
 	// No open PRs / no plan read as placeholders, not as a count of one.
 	empty := *s
 	empty.PRs, empty.Plan = nil, nil
-	if out := render(&empty, viewState{W: 120, H: 40}, plain(), false); !strings.Contains(out, "Pull requests (0)") || !strings.Contains(out, "no open pull requests") {
+	if out := render(&empty, &viewState{W: 120, H: 40}, plain(), false); !strings.Contains(out, "Pull requests (0)") || !strings.Contains(out, "no open pull requests") {
 		t.Errorf("empty PR pane wrong:\n%s", out)
 	}
-	if out := render(nil, viewState{W: 80, H: 24}, plain(), false); !strings.Contains(out, "collecting") {
+	if out := render(nil, &viewState{W: 80, H: 24}, plain(), false); !strings.Contains(out, "collecting") {
 		t.Errorf("first paint = %q", out)
 	}
-	if out := render(s, viewState{W: 120, H: 40, Err: errors.New("gh: boom\nsecond line")}, plain(), false); !strings.Contains(out, "refresh failed") || strings.Count(out, "second line") != 1 {
+	if out := render(s, &viewState{W: 120, H: 40, Err: errors.New("gh: boom\nsecond line")}, plain(), false); !strings.Contains(out, "refresh failed") || strings.Count(out, "second line") != 1 {
 		t.Errorf("refresh error not shown on one line:\n%s", out)
 	}
 }
 
-func TestScrollingClamps(t *testing.T) {
-	s := syntheticSnapshot()
+func TestCursorKeepsItsRowInView(t *testing.T) {
+	s := syntheticSnapshot() // 40 issues, each with a "↳ why" line
 	v := viewState{W: 120, H: 30, Zoom: true, Focus: paneIssues}
-	v.Off[paneIssues] = 1 << 30 // "G": far past the end
-	out := render(s, v, plain(), false)
-	if !strings.Contains(out, "#40") || strings.Contains(out, "#1 ") {
-		t.Errorf("scrolling to the end should show the last issue, not the first:\n%s", out)
+
+	v.SelNum = 40 // the last issue: the window must follow it down
+	out := render(s, &v, plain(), false)
+	if !strings.Contains(out, "▸ #40") || strings.Contains(out, "#1 ") {
+		t.Errorf("the cursor's row must be visible, with a marker:\n%s", out)
 	}
 	if !strings.Contains(out, "of 81") { // header + 40 issues + 40 "↳ why stalled" lines
 		t.Errorf("scrolled pane should show its line range:\n%s", out)
 	}
-	v.Off[paneIssues] = -5
-	if out := render(s, v, plain(), false); !strings.Contains(out, "#1 ") {
-		t.Error("negative offset should clamp to the top")
+	offAtBottom := v.Off[paneIssues]
+	if offAtBottom == 0 {
+		t.Fatal("render should persist the scroll position it chose")
+	}
+
+	// Moving up inside the window moves the cursor, not the rows.
+	v.SelNum = 39
+	out = render(s, &v, plain(), false)
+	if v.Off[paneIssues] != offAtBottom || !strings.Contains(out, "▸ #39") {
+		t.Errorf("window moved (%d -> %d) although the cursor stayed inside it", offAtBottom, v.Off[paneIssues])
+	}
+
+	// Back to the top shows the table header again.
+	v.SelNum = 1
+	out = render(s, &v, plain(), false)
+	if v.Off[paneIssues] != 0 || !strings.Contains(out, "STATE") || !strings.Contains(out, "▸ #1 ") {
+		t.Errorf("first row selected should show the header and start at the top:\n%s", out)
+	}
+
+	// A cursor on an issue that has left the list falls back to the first row, not a crash.
+	v.SelNum = 999
+	if out := render(s, &v, plain(), false); !strings.Contains(out, "▸ #1 ") {
+		t.Errorf("unknown SelNum should select the first row:\n%s", out)
+	}
+}
+
+func TestKeepInView(t *testing.T) {
+	tests := []struct{ off, start, end, h, total, want int }{
+		{0, 10, 11, 5, 30, 7},   // below the window: scroll down just enough to show the row and its reason line
+		{20, 10, 11, 5, 30, 10}, // above: scroll up to the row
+		{5, 6, 7, 5, 30, 5},     // inside: stay
+		{9, 1, 1, 5, 30, 0},     // the first row shows the header
+		{50, 3, 3, 5, 30, 3},    // a stale offset is clamped first
+	}
+	for _, tt := range tests {
+		if got := keepInView(tt.off, tt.start, tt.end, tt.h, tt.total); got != tt.want {
+			t.Errorf("keepInView(%d, %d-%d, h=%d, n=%d) = %d, want %d", tt.off, tt.start, tt.end, tt.h, tt.total, got, tt.want)
+		}
 	}
 }
 
@@ -330,7 +366,7 @@ func TestTailFile(t *testing.T) {
 
 func TestSnapshotCapsTheLog(t *testing.T) {
 	s := syntheticSnapshot() // 60 non-trace log lines
-	out := render(s, viewState{W: 120, Interval: time.Second}, plain(), true)
+	out := render(s, &viewState{W: 120, Interval: time.Second}, plain(), true)
 	if n := strings.Count(out, "sync: line "); n != snapshotLogLines {
 		t.Errorf("--once printed %d log lines, want the last %d", n, snapshotLogLines)
 	}
@@ -379,12 +415,12 @@ func TestHeightsRedistribute(t *testing.T) {
 func TestLogFollowsTheTail(t *testing.T) {
 	s := syntheticSnapshot() // sync: line 0 … sync: line 59
 	v := viewState{W: 120, H: 20, Zoom: true, Focus: paneLog}
-	out := render(s, v, plain(), false)
+	out := render(s, &v, plain(), false)
 	if !strings.Contains(out, "sync: line 59") || strings.Contains(out, "sync: line 0\n") {
 		t.Errorf("the log should open on its newest lines:\n%s", out)
 	}
 	v.LogBack = 1 << 30
-	out = render(s, v, plain(), false)
+	out = render(s, &v, plain(), false)
 	if !strings.Contains(out, "sync: line 0") || strings.Contains(out, "sync: line 59") {
 		t.Errorf("scrolled to the top it should show the oldest lines:\n%s", out)
 	}
@@ -392,7 +428,7 @@ func TestLogFollowsTheTail(t *testing.T) {
 		t.Errorf("a scrolled-back log should say how to resume:\n%s", out)
 	}
 	v.LogBack = 0
-	if out := render(s, v, plain(), false); strings.Contains(out, "G to follow") {
+	if out := render(s, &v, plain(), false); strings.Contains(out, "G to follow") {
 		t.Error("a following log has nothing to resume")
 	}
 }

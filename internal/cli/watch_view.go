@@ -36,7 +36,10 @@ type viewState struct {
 	Off   [numPanes]int
 	// LogBack is how far the activity log is scrolled up from its newest line. 0 follows
 	// the tail, which is what a log is for; the other panes scroll from the top (Off).
-	LogBack  int
+	LogBack int
+	// SelNum is the issue the cursor is on (0: the first row). It is a number, not an index,
+	// because rows re-sort as states change and the cursor must stay on its issue.
+	SelNum   int
 	Zoom     bool
 	Verbose  bool // show the → command traces in the activity log
 	LogSel   int  // 0 = sync log, 1 = daemon log
@@ -74,49 +77,78 @@ func fit(s string, w int) string {
 	return s
 }
 
-// paneLines returns a pane's lines and how many items they represent (a placeholder line
-// like "no open pull requests" is zero items).
-func (v viewState) paneLines(s *snapshot, p ui.Palette, which pane) ([]string, int) {
+// paneContent is a pane's lines, how many items they represent (a placeholder line like
+// "no open pull requests" is zero items), and, for the issues pane, which lines the cursor's
+// row occupies (its reason line included) so the window can keep it in view.
+type paneContent struct {
+	Lines            []string
+	Count            int
+	SelStart, SelEnd int
+}
+
+func (v viewState) paneLines(s *snapshot, p ui.Palette, which pane) paneContent {
 	w := v.W - 2 // one column of margin each side
 	switch which {
 	case paneIssues:
-		return issueLines(s, p, w), len(s.Issues)
+		lines, a, b := issueLines(s, p, w, v.SelNum, v.Focus == paneIssues)
+		return paneContent{lines, len(s.Issues), a, b}
 	case panePRs:
-		return prLines(s, p, w), len(s.PRs)
+		return paneContent{Lines: prLines(s, p, w), Count: len(s.PRs)}
 	case panePlan:
-		return planLines(s, p, w), len(s.Plan)
+		return paneContent{Lines: planLines(s, p, w), Count: len(s.Plan)}
 	default:
 		lines := v.logPaneLines(s, p, w)
-		return lines, len(lines)
+		return paneContent{Lines: lines, Count: len(lines)}
 	}
 }
 
-func issueLines(s *snapshot, p ui.Palette, w int) []string {
-	if len(s.Issues) == 0 {
-		return []string{p.Dim.Render("no open issues")}
+// selectedIssue is the row the cursor is on: SelNum's row, else the first.
+func selectedIssue(s *snapshot, sel int) int {
+	for i, r := range s.Issues {
+		if r.Num == sel {
+			return i
+		}
 	}
-	const numW, stateW, agentW, prW, gateW = 5, 16, 16, 6, 14
-	titleW := w - (numW + stateW + agentW + prW + gateW + 5)
+	return 0
+}
+
+func issueLines(s *snapshot, p ui.Palette, w, selNum int, focused bool) (lines []string, selStart, selEnd int) {
+	if len(s.Issues) == 0 {
+		return []string{p.Dim.Render("no open issues")}, 0, 0
+	}
+	const markW, numW, stateW, agentW, prW, gateW = 2, 5, 16, 16, 6, 14
+	titleW := w - (markW + numW + stateW + agentW + prW + gateW + 5)
 	if titleW < 12 {
 		titleW = 12
 	}
-	head := p.Dim.Render(fit("#", numW) + " " + fit("STATE", stateW) + " " + fit("ISSUE", titleW) + " " + fit("AGENT", agentW) + " " + fit("PR", prW) + " " + fit("GATE", gateW))
-	lines := []string{head}
-	for _, r := range s.Issues {
+	lines = []string{p.Dim.Render(strings.Repeat(" ", markW) + fit("#", numW) + " " + fit("STATE", stateW) + " " + fit("ISSUE", titleW) + " " + fit("AGENT", agentW) + " " + fit("PR", prW) + " " + fit("GATE", gateW))}
+	sel := selectedIssue(s, selNum)
+	for i, r := range s.Issues {
 		pr := ""
 		if r.PR != 0 {
 			pr = fmt.Sprintf("#%d", r.PR)
 		}
-		lines = append(lines, fit(fmt.Sprintf("#%d", r.Num), numW)+" "+
+		mark := "  "
+		if i == sel {
+			mark = p.Dim.Render("› ")
+			if focused {
+				mark = p.Accent.Render("▸ ")
+			}
+			selStart = len(lines)
+		}
+		lines = append(lines, mark+fit(fmt.Sprintf("#%d", r.Num), numW)+" "+
 			toneStyle(p, r.Tone).Render(fit(r.State, stateW))+" "+
 			fit(r.Title, titleW)+" "+
 			p.Dim.Render(fit(r.Agent, agentW))+" "+fit(pr, prW)+" "+
 			toneStyle(p, gateTone(r.Gate)).Render(fit(r.Gate, gateW)))
 		if r.Why != "" {
-			lines = append(lines, strings.Repeat(" ", numW+1)+p.Warn.Render("↳ "+r.Why))
+			lines = append(lines, strings.Repeat(" ", markW+numW+1)+p.Warn.Render("↳ "+r.Why))
+		}
+		if i == sel {
+			selEnd = len(lines) - 1
 		}
 	}
-	return lines
+	return lines, selStart, selEnd
 }
 
 func gateTone(g string) tone {
@@ -233,7 +265,7 @@ func (v viewState) heights(headerFooter int, lens [numPanes]int) (h [numPanes]in
 // render draws the whole dashboard. When the snapshot is nil (first load) it shows a
 // waiting line; otherwise the panes are clipped to their heights and the focused one
 // scrolls by v.Off.
-func render(s *snapshot, v viewState, p ui.Palette, unclipped bool) string {
+func render(s *snapshot, v *viewState, p ui.Palette, unclipped bool) string {
 	var out []string
 	out = append(out, header(s, v, p)...)
 	if s == nil {
@@ -241,19 +273,24 @@ func render(s *snapshot, v viewState, p ui.Palette, unclipped bool) string {
 		return strings.Join(out, "\n")
 	}
 	headerFooter := len(out) + 2 // footer + error line
-	var all [numPanes][]string
-	var counts, lens [numPanes]int
+	var all [numPanes]paneContent
+	var lens [numPanes]int
 	for i := pane(0); i < numPanes; i++ {
-		all[i], counts[i] = v.paneLines(s, p, i)
-		lens[i] = len(all[i])
+		all[i] = v.paneLines(s, p, i)
+		lens[i] = len(all[i].Lines)
 	}
 	heights, visible := v.heights(headerFooter, lens)
 	for i := pane(0); i < numPanes; i++ {
 		if !visible[i] {
 			continue
 		}
-		lines, count := all[i], counts[i]
+		lines, count := all[i].Lines, all[i].Count
 		h := heights[i]
+		if i == paneIssues && !unclipped {
+			// The cursor moves the window, and the window's position is kept (v.Off), so
+			// moving inside it moves the cursor and not the rows.
+			v.Off[i] = keepInView(v.Off[i], all[i].SelStart, all[i].SelEnd, h, len(lines))
+		}
 		if unclipped {
 			if i == paneLog && len(lines) > snapshotLogLines { // a snapshot wants the recent past, not the whole file
 				lines = lines[len(lines)-snapshotLogLines:]
@@ -277,7 +314,7 @@ func render(s *snapshot, v viewState, p ui.Palette, unclipped bool) string {
 	return strings.Join(out, "\n")
 }
 
-func header(s *snapshot, v viewState, p ui.Palette) []string {
+func header(s *snapshot, v *viewState, p ui.Palette) []string {
 	title := p.Accent.Render(" fleet") + p.Dim.Render(" ▸ ")
 	if s == nil {
 		return []string{title + "starting…"}
@@ -325,7 +362,7 @@ func (v viewState) offset(which pane, total, h int) int {
 	return clamp(v.Off[which], 0, last)
 }
 
-func paneTitle(p ui.Palette, which pane, count, total int, v viewState, h, off int) string {
+func paneTitle(p ui.Palette, which pane, count, total int, v *viewState, h, off int) string {
 	name := fmt.Sprintf("%s (%d)", paneNames[which], count)
 	if which == paneLog {
 		src := "sync"
@@ -352,11 +389,11 @@ func paneTitle(p ui.Palette, which pane, count, total int, v viewState, h, off i
 
 // footer lists the keys that fit: the full set when there is room, then fewer, so it is
 // always one line (a wrapped footer pushes the panes off the screen).
-func footer(p ui.Palette, v viewState) string {
+func footer(p ui.Palette, v *viewState) string {
 	sets := [][]string{
-		{"q quit", "r refresh", "tab pane", "↑↓ scroll", "z zoom", "l log", "v traces", "? help", fmt.Sprintf("every %s", v.Interval)},
-		{"q quit", "r refresh", "tab pane", "↑↓ scroll", "z zoom", "? help"},
-		{"q quit", "tab pane", "? help"},
+		{"q quit", "enter open task", "r refresh", "tab pane", "↑↓ move", "z zoom", "l log", "v traces", "? help", fmt.Sprintf("every %s", v.Interval)},
+		{"q quit", "enter open", "r refresh", "tab pane", "↑↓ move", "? help"},
+		{"q quit", "enter open", "? help"},
 	}
 	for _, keys := range sets {
 		if s := " " + strings.Join(keys, "  ·  "); lipgloss.Width(s) <= v.W {
@@ -369,10 +406,11 @@ func footer(p ui.Palette, v viewState) string {
 func helpText(p ui.Palette) string {
 	return strings.Join([]string{
 		"",
-		p.Accent.Render("  fleet watch") + p.Dim.Render(" — read-only: it never changes GitHub, Multica or the fleet's state"),
+		p.Accent.Render("  fleet watch") + p.Dim.Render(" — the board is read-only; a task's follow-up box is the only thing that writes, and it asks first"),
 		"",
-		"  tab / shift-tab   next / previous pane        ↑ ↓ / j k    scroll the focused pane",
-		"  g / G             top / bottom                 pgup / pgdn  scroll a page",
+		"  enter             open the task under the cursor  (ask a question, or tab to tell its agent something)",
+		"  tab / shift-tab   next / previous pane        ↑ ↓ / j k    move the cursor / scroll the pane",
+		"  g / G             top / bottom                 pgup / pgdn  a page",
 		"  z                 zoom the focused pane        l            switch the log: sync ⇄ daemon",
 		"  v                 show / hide command traces   r            refresh now",
 		"  ?                 close this help              q / ctrl-c   quit",
@@ -391,5 +429,21 @@ func orDash(s string) string {
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// keepInView moves a scroll offset the least it takes to show lines [start, end] in a
+// window of h lines, and shows the table header when the first row is selected.
+func keepInView(off, start, end, h, total int) int {
+	off = clamp(off, 0, max(0, total-h))
+	if start <= 1 {
+		return 0
+	}
+	if start < off {
+		off = start
+	}
+	if end >= off+h {
+		off = end - h + 1
+	}
+	return clamp(off, 0, max(0, total-h))
+}
 
 func clamp(x, lo, hi int) int { return max(lo, min(x, hi)) }
