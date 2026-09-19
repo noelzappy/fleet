@@ -46,7 +46,7 @@ func Root() *cobra.Command {
 	root.AddCommand(
 		initCmd(), bootstrapCmd(), harnessCmd(), githubCmd(), orchestratorCmd(),
 		issuesCmd(), syncCmd(), upCmd(), pauseCmd(), resumeCmd(), killCmd(), panicCmd(),
-		statusCmd(), watchCmd(), digestCmd(), versionCmd(),
+		statusCmd(), watchCmd(), telegramCmd(), digestCmd(), versionCmd(),
 	)
 	return root
 }

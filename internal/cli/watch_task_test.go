@@ -316,6 +316,7 @@ type recorder struct {
 	answer  string
 	askErr  error
 	sendEr  error
+	load    func(*taskDetail) // optional: adjust each loaded detail
 }
 
 func (r *recorder) ops() watchOps {
@@ -334,6 +335,9 @@ func (r *recorder) ops() watchOps {
 			r.loads++
 			td := sampleDetail()
 			td.Num = n
+			if r.load != nil {
+				r.load(td)
+			}
 			return td, nil
 		},
 		ask: func(_ context.Context, _ map[string]bool, prompt string) (string, string, error) {

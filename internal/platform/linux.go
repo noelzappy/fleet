@@ -99,6 +99,16 @@ func (Linux) ServiceFiles(spec Spec) ([]File, error) {
 	return files, nil
 }
 
+// JobFiles renders one always-on job as a user service.
+func (Linux) JobFiles(job Job) ([]File, error) {
+	job.Exec = strings.Replace(job.Exec, "~/", "%h/", 1)
+	b, err := templates.Render("systemd.service.tmpl", job)
+	if err != nil {
+		return nil, err
+	}
+	return []File{{Path: config.ExpandPath("~/.config/systemd/user/" + job.Name + ".service"), Data: b, Mode: 0o644}}, nil
+}
+
 func (Linux) ReloadCmd(Spec) string {
 	return "systemctl --user daemon-reload && loginctl enable-linger $USER"
 }

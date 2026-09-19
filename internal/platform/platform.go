@@ -51,6 +51,8 @@ type Platform interface {
 	Notes(m config.Machine) []string
 	// ServiceFiles renders the daemon and sync jobs for the service manager.
 	ServiceFiles(spec Spec) ([]File, error)
+	// JobFiles renders one always-on job (the Telegram bot) as a service definition.
+	JobFiles(job Job) ([]File, error)
 	// ReloadCmd makes the service manager see freshly written files. Idempotent.
 	ReloadCmd(spec Spec) string
 	// Jobs are the names StartCmd/StopCmd act on together (the daemon and the timer).

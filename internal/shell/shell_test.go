@@ -36,10 +36,11 @@ func TestQuote(t *testing.T) {
 
 func TestRedact(t *testing.T) {
 	cases := map[string]string{
-		"curl -H 'Authorization: Bearer eyJhbGciOi.eyJlbWFp.sig-_x' http://x": "curl -H 'Authorization: Bearer ***' http://x",
-		"multica login --token mul_c77d4477abcdef":                            "multica login --token mul_***",
-		"git push https://x:ghs_abcdefgh12345@github.com":                     "git push https://x:ghs_***@github.com",
-		"→ curl -fsS http://127.0.0.1:8080/readyz":                            "→ curl -fsS http://127.0.0.1:8080/readyz",
+		"curl -H 'Authorization: Bearer eyJhbGciOi.eyJlbWFp.sig-_x' http://x":                   "curl -H 'Authorization: Bearer ***' http://x",
+		"multica login --token mul_c77d4477abcdef":                                              "multica login --token mul_***",
+		"git push https://x:ghs_abcdefgh12345@github.com":                                       "git push https://x:ghs_***@github.com",
+		"curl https://api.telegram.org/bot123456789:AAH-secret_token-value-0123456789abc/getMe": "curl https://api.telegram.org/bot***/getMe",
+		"→ curl -fsS http://127.0.0.1:8080/readyz":                                              "→ curl -fsS http://127.0.0.1:8080/readyz",
 	}
 	for in, want := range cases {
 		if got := Redact(in); got != want {

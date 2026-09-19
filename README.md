@@ -198,7 +198,7 @@ Everything project-specific lives in `fleet.yaml`. The binary itself is project-
 | `routing` | `cross_vendor_review`, `max_gate_attempts` (default 3), `fixer_only_lint`, `idle_grace` (default `5m`), `quota_cooldown` (default `5h`) |
 | `orchestrator` | `kind` (`multica`), `dir` (its checkout, default `~/fleet/multica`), `dashboard_bind` (`127.0.0.1` for this machine only, or your Tailscale IP; must exist on the machine), `service_name` (default `fleet-multica`), `workspace`, `sync_interval` (default `2m`), `owner_email` |
 | `github` | `auth` (`gh` or `app`), `isolation` (`box` or `project`), GitHub App slug, private key path, `required_checks` |
-| `notify` | Telegram secret *names* (GitHub Actions secrets) and the digest schedule |
+| `notify` | Telegram secret *names* (GitHub Actions secrets, and the same names in `~/.config/fleet/env` for `fleet telegram`) and the digest schedule |
 | `gate` | `command` (default `pnpm gate`), `timeout` (default `15m`), `workflow` (the Actions workflow that runs it on PRs, default `gate`) |
 | `labels` | rename any label; unset ones use the defaults above |
 
@@ -252,6 +252,36 @@ Keys: `tab` switch pane, `↑ ↓` / `j k` move the cursor in Issues (scroll els
 `fleet sync` reports the same "ready but not dispatched" reasons in its log, so a silently ignored `agent-ready` label no longer stays silent.
 
 **Output and colour.** Progress lines (`✓` done, `●` doing, `→` a command run, `✗` failed) are coloured on a terminal. `NO_COLOR`, pipes, files and launchd/systemd logs get exactly the plain text fleet has always printed, and `fleet status` stays three lines.
+
+### Telegram
+
+Telegram works in two directions, with two separate mechanisms:
+
+- **Notifications out:** the GitHub Actions workflow `fleet github init` writes posts to your chat when an issue needs you, a PR opens or a gate fails. It uses the `TG_TOKEN` and `TG_CHAT` **GitHub secrets**.
+- **Commands in:** `fleet telegram` is a small bot that runs on the fleet machine and answers **one chat, yours**. It is the phone version of the `watch` task view and shares its code, so the two behave the same. It uses the **same two values in the local secrets file**.
+
+Setup, once:
+
+1. Create a bot with @BotFather (or reuse the one your notifications use) and put its token in `~/.config/fleet/env` as `TG_TOKEN=…`.
+2. Run `fleet telegram whoami`, open the bot in Telegram, press Start and send it anything. It prints `TG_CHAT=…` (and `TG_USER=…`); put `TG_CHAT` in the same file.
+3. `fleet telegram test` checks the token and sends one message. `fleet telegram install` keeps the bot running as its own service (`<service_name>-telegram`); `fleet pause` doesn't stop it, so you can still check in on a paused fleet. `fleet telegram stop` stops it until the next login or boot.
+
+| Send | It does |
+|---|---|
+| `/status` | the same lines as `fleet status` |
+| `/tasks` | open issues, what needs you first, with the reason a ready issue isn't being dispatched |
+| `/task 7` | runs, recent comments, the PR and gate, and the agent's worktree |
+| `/ask 7 why did it stop?` | asks the tool-less model about task 7 (follow-ups remember the conversation) |
+| `/tell 7 run the gate first` | shows what it will send, with **Send** and **Cancel** buttons; nothing is sent until you press Send |
+| a reply to a notification | replying to a message that names `#7` (or a PR of #7) asks about that issue |
+
+Security, since this is a way to command agents from a chat:
+
+- **One chat, fail closed.** Messages and button presses from any other chat are ignored with no reply. A private chat with the bot is trusted as is. A **group** chat is refused at startup unless `TG_USER` (your own user id) is also set, and then only that user is obeyed, because anyone in a group could otherwise command the fleet.
+- **Nothing acts on its own.** `/ask` is text in and text out, with tools off. `/tell` posts one comment, after a button press, once per request; a request expires after 10 minutes and a second tap does nothing.
+- **The token stays out of logs and errors**; Telegram puts it in every URL, so all output and error text is scrubbed.
+- **Telegram bot chats aren't end-to-end encrypted.** Answers and task details pass through Telegram's servers, the same way the issue titles in your notifications already do. Don't `/ask` about a task whose content you wouldn't send through a messenger.
+- Messages that arrived while the bot was down are dropped at startup, so an old command never runs late. Only one process can poll a bot at a time: stop the service before running `fleet telegram whoami`.
 
 ### GitHub App isolation
 
@@ -331,6 +361,7 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`. "box" m
 | `fleet harness update [name]` | Run each CLI's self-update (`claude update`, `opencode upgrade`, `agy update`), then check `min_version`. Run weekly | anywhere |
 | `fleet github init` | Create/update all labels; write the `pr-contract` check and the Telegram notify workflow | anywhere |
 | `fleet watch` | Live terminal dashboard: issues, PRs, agents, harness health, what the next `sync` tick will do, and the activity log. The board is read-only; `enter` opens a task where you can ask about it or tell its agent something (asks first). `--interval` (default 10s), `--once` for one plain snapshot. See [Watching the fleet](#watching-the-fleet) | box |
+| `fleet telegram run` / `test` / `whoami` / `install` / `stop` | The Telegram bot: answers one chat with status, tasks, ask and tell. `test` checks the token and chat; `whoami` prints your ids; `install` runs it as a service. See [Telegram](#telegram) | box |
 | `fleet github app import` | Adopt an App that already exists from its App ID and a private key (lost key or state, or an App you registered by hand). Verifies the key with GitHub, refuses forbidden permissions, then finds or waits for the install | anywhere |
 | `fleet github app create` / `use` / `unuse` | Register the GitHub App (manifest flow, install on the one repo), switch the machine or this project to it, undo that. See [GitHub App isolation](#github-app-isolation) | create: anywhere; use/unuse: box |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |

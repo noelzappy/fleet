@@ -51,12 +51,15 @@ var (
 	// Multica PATs (mul_, mcn_) and GitHub tokens; anything else secret should travel
 	// through a 0600 file or stdin, not the command line.
 	tokenLike = regexp.MustCompile(`\b(mul|mcn|ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{8,}`)
+	// A Telegram bot token is <digits>:<35 url-safe chars>, and sits in the URL path.
+	telegramToken = regexp.MustCompile(`\d{6,}:[A-Za-z0-9_-]{30,}`)
 )
 
 // Redact masks credentials in a command trace, which lands in terminals, scrollback,
 // systemd logs and pasted bug reports.
 func Redact(s string) string {
 	s = bearer.ReplaceAllString(s, "${1}***")
+	s = telegramToken.ReplaceAllString(s, "***")
 	return tokenLike.ReplaceAllString(s, "${1}_***")
 }
 

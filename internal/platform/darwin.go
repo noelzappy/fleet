@@ -94,26 +94,40 @@ func (Darwin) Notes(config.Machine) []string {
 func (Darwin) ServiceFiles(spec Spec) ([]File, error) {
 	var files []File
 	for _, job := range []Job{spec.Daemon, spec.Sync} {
-		data := struct {
-			Job
-			Seconds int
-			Log     string
-		}{Job: job, Log: config.ExpandPath("~/Library/Logs/fleet/" + job.Name + ".log")}
-		data.Exec = strings.Replace(data.Exec, "~/", "$HOME/", 1)
-		if job.Interval != "" {
-			d, err := time.ParseDuration(job.Interval)
-			if err != nil {
-				return nil, fmt.Errorf("%s interval: %w", job.Name, err)
-			}
-			data.Seconds = int(d.Seconds())
-		}
-		b, err := templates.Render("launchd.plist.tmpl", data)
+		f, err := launchdFile(job)
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, File{Path: plistPath(job.Name), Data: b, Mode: 0o644})
+		files = append(files, f)
 	}
 	return files, nil
+}
+
+// JobFiles renders one job, for services that aren't part of the daemon/sync pair.
+func (Darwin) JobFiles(job Job) ([]File, error) {
+	f, err := launchdFile(job)
+	return []File{f}, err
+}
+
+func launchdFile(job Job) (File, error) {
+	data := struct {
+		Job
+		Seconds int
+		Log     string
+	}{Job: job, Log: config.ExpandPath("~/Library/Logs/fleet/" + job.Name + ".log")}
+	data.Exec = strings.Replace(data.Exec, "~/", "$HOME/", 1)
+	if job.Interval != "" {
+		d, err := time.ParseDuration(job.Interval)
+		if err != nil {
+			return File{}, fmt.Errorf("%s interval: %w", job.Name, err)
+		}
+		data.Seconds = int(d.Seconds())
+	}
+	b, err := templates.Render("launchd.plist.tmpl", data)
+	if err != nil {
+		return File{}, err
+	}
+	return File{Path: plistPath(job.Name), Data: b, Mode: 0o644}, nil
 }
 
 func plistPath(label string) string {

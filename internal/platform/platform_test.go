@@ -179,3 +179,46 @@ func TestServiceCommands(t *testing.T) {
 		t.Error("windows accepted")
 	}
 }
+
+func TestJobFilesRenderAnAlwaysOnService(t *testing.T) {
+	job := Job{Name: "fleet-multica-telegram", Description: "Telegram bot (fleet)", Exec: "/opt/homebrew/bin/fleet -c /p/fleet.yaml telegram run", WorkingDir: "/p"}
+
+	d, err := Darwin{}.JobFiles(job)
+	if err != nil || len(d) != 1 {
+		t.Fatalf("darwin: %v %v", d, err)
+	}
+	if !strings.HasSuffix(d[0].Path, "/Library/LaunchAgents/fleet-multica-telegram.plist") {
+		t.Errorf("plist path = %s", d[0].Path)
+	}
+	plist := string(d[0].Data)
+	for _, want := range []string{"<key>KeepAlive</key><true/>", "<key>RunAtLoad</key><true/>", "telegram run", ".config/fleet/env"} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("plist is missing %q:\n%s", want, plist)
+		}
+	}
+	if strings.Contains(plist, "StartInterval") {
+		t.Error("the bot is a long-running job, not a timer")
+	}
+
+	l, err := Linux{}.JobFiles(job)
+	if err != nil || len(l) != 1 {
+		t.Fatalf("linux: %v %v", l, err)
+	}
+	if !strings.HasSuffix(l[0].Path, "/.config/systemd/user/fleet-multica-telegram.service") {
+		t.Errorf("unit path = %s", l[0].Path)
+	}
+	unit := string(l[0].Data)
+	for _, want := range []string{"Type=simple", "Restart=on-failure", "ExecStart=/opt/homebrew/bin/fleet -c /p/fleet.yaml telegram run", "WantedBy=default.target", "EnvironmentFile=%h/.config/fleet/env"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit is missing %q:\n%s", want, unit)
+		}
+	}
+	// Adding a service must not change the pair `fleet up` and `fleet pause` manage.
+	spec := Spec{Daemon: Job{Name: "d"}, Sync: Job{Name: "s", Interval: "2m"}}
+	if got := (Darwin{}).Jobs(spec); len(got) != 2 {
+		t.Errorf("darwin jobs = %v", got)
+	}
+	if got := (Linux{}).Jobs(spec); len(got) != 2 {
+		t.Errorf("linux jobs = %v", got)
+	}
+}
