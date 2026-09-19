@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/noelzappy/fleet/internal/ui"
 )
 
 var DryRun bool
@@ -18,6 +20,11 @@ var DryRun bool
 // Quiet suppresses the "→ command" trace on stderr. `fleet github token` sets it: git and
 // every gh call through the wrapper run it, and the trace would land in agent output.
 var Quiet bool
+
+// Silent goes further than Quiet for polling loops: no trace, and the stderr of Output and
+// OutputInput commands is dropped, so an expected failure (a 404 while waiting for an App
+// install) doesn't scroll past every few seconds. Errors still come back as the error value.
+var Silent bool
 
 // PathPrefix, when set, is put first on PATH for every command fleet runs. It is applied
 // inside the command, after the login shell has read the profile files (Homebrew's
@@ -34,8 +41,8 @@ func wrap(cmd string) string {
 }
 
 func trace(format string, a ...any) {
-	if !Quiet {
-		fmt.Fprint(os.Stderr, Redact(fmt.Sprintf(format, a...)))
+	if !Quiet && !Silent {
+		fmt.Fprint(os.Stderr, ui.Style(ui.Err, Redact(fmt.Sprintf(format, a...))))
 	}
 }
 
@@ -73,7 +80,9 @@ func Output(ctx context.Context, cmd string) (string, error) {
 		return "", nil
 	}
 	c := exec.CommandContext(ctx, "bash", "-lc", wrap(cmd))
-	c.Stderr = os.Stderr
+	if !Silent {
+		c.Stderr = os.Stderr
+	}
 	b, err := c.Output()
 	return strings.TrimSpace(string(b)), err
 }
@@ -87,7 +96,9 @@ func OutputInput(ctx context.Context, cmd, stdin string) (string, error) {
 	}
 	c := exec.CommandContext(ctx, "bash", "-lc", wrap(cmd))
 	c.Stdin = strings.NewReader(stdin)
-	c.Stderr = os.Stderr
+	if !Silent {
+		c.Stderr = os.Stderr
+	}
 	b, err := c.Output()
 	return strings.TrimSpace(string(b)), err
 }

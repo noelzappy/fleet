@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/shell"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -129,7 +129,7 @@ func expandHarnessEnv(m map[string]string) (map[string]string, error) {
 	}
 	env, err := config.ExpandEnv(m, lookup)
 	if err != nil && shell.DryRun {
-		fmt.Fprintln(os.Stderr, "warning:", err)
+		ui.Errln("warning:", err)
 		return m, nil
 	}
 	return env, err
@@ -168,7 +168,7 @@ func harnessUpdate(_ *cobra.Command, args []string) error {
 	var failed []string
 	for _, name := range names {
 		if err := checkMinVersion(ctx, name, cfg.Harnesses[name]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			ui.Errln(err)
 			failed = append(failed, name)
 		}
 	}
@@ -189,7 +189,7 @@ func checkMinVersion(ctx context.Context, name string, h config.Harness) error {
 	}
 	out, err := shell.Output(ctx, k.bin+" --version")
 	if shell.DryRun {
-		fmt.Fprintf(os.Stderr, "  (requires %s >= %s)\n", k.bin, h.MinVersion)
+		ui.Errf("  (requires %s >= %s)\n", k.bin, h.MinVersion)
 		return nil
 	}
 	if err != nil {

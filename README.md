@@ -230,6 +230,22 @@ These are the kinds fleet supports, with invocations checked against the install
 
 **Quota cooldown.** A vendor that has hit a usage, session or rate limit is still signed in, so the check above passes and routing would keep handing it work that fails the same way. When a run fails with an error that reads like a limit (`usage limit`, `rate limit`, `quota`, `429`, `credit balance`…), fleet puts that harness on a cooldown for `routing.quota_cooldown` (default `5h`, roughly a Claude session window). During it the harness is treated like a signed-out one: no new work, and a retry re-routes to another vendor's profile. The failed run is still escalated to `needs-human` as usual. The cooldown is remembered in `~/.config/fleet/cooldowns.json`, and each failed run starts it once, so an old failure left on an issue doesn't re-arm it. The error text rarely says when the limit resets, hence a fixed window; set it to what your plan uses.
 
+### Watching the fleet
+
+`fleet watch` is a full-screen dashboard that refreshes every `--interval` (default 10s; each refresh makes several `gh` and `multica` calls). It is read-only, and it uses the same observation and planner as `fleet sync`, so what it shows is what the reconciler sees:
+
+- **Header:** daemon and sync-timer state, whether the fleet is paused, and each harness as signed in, signed out, or out of quota until a time.
+- **Issues:** what needs you sorts first (stuck, `needs-*`, agent failed, gate failing), then active work, then the queue. A ready issue that isn't being dispatched says why underneath: no wave label, a dependency still open, no profile serves the wave, or every serving harness is signed out or cooling down.
+- **Pull requests:** newest gate result, conflicts, attribution trailers, body problems.
+- **Next sync tick:** exactly what `fleet sync` would do now.
+- **Activity:** the tail of the sync log (or the daemon's, with `l`). Command traces are hidden until you press `v`.
+
+Keys: `tab` switch pane, `↑ ↓` / `j k` scroll, `g` / `G` top / bottom (`G` on the log resumes following the tail), `z` zoom a pane, `r` refresh, `?` help, `q` quit. `fleet watch --once` prints one plain snapshot (also what you get when stdout isn't a terminal), which is the thing to paste into an issue.
+
+`fleet sync` reports the same "ready but not dispatched" reasons in its log, so a silently ignored `agent-ready` label no longer stays silent.
+
+**Output and colour.** Progress lines (`✓` done, `●` doing, `→` a command run, `✗` failed) are coloured on a terminal. `NO_COLOR`, pipes, files and launchd/systemd logs get exactly the plain text fleet has always printed, and `fleet status` stays three lines.
+
 ### GitHub App isolation
 
 With `github.auth: app`, agents push and open PRs with short-lived installation tokens from a GitHub App installed on the one repo. `github.isolation` sets how far that reaches into the machine:
@@ -307,6 +323,8 @@ Global flags: `-c, --config <path>` (default `fleet.yaml`), `--dry-run`. "box" m
 | `fleet harness verify` | Check `min_version`s, then a throwaway worktree where every harness runs the gate headless; PASS/FAIL table | box |
 | `fleet harness update [name]` | Run each CLI's self-update (`claude update`, `opencode upgrade`, `agy update`), then check `min_version`. Run weekly | anywhere |
 | `fleet github init` | Create/update all labels; write the `pr-contract` check and the Telegram notify workflow | anywhere |
+| `fleet watch` | Live, read-only terminal dashboard: issues, PRs, agents, harness health, what the next `sync` tick will do, and the activity log. `--interval` (default 10s), `--once` for one plain snapshot. See [Watching the fleet](#watching-the-fleet) | box |
+| `fleet github app import` | Adopt an App that already exists from its App ID and a private key (lost key or state, or an App you registered by hand). Verifies the key with GitHub, refuses forbidden permissions, then finds or waits for the install | anywhere |
 | `fleet github app create` / `use` / `unuse` | Register the GitHub App (manifest flow, install on the one repo), switch the machine or this project to it, undo that. See [GitHub App isolation](#github-app-isolation) | create: anywhere; use/unuse: box |
 | `fleet issues sync <file>` | Bulk-create issues from YAML, then write `## Depends on` with real `#numbers` | anywhere |
 | `fleet sync` | One reconciliation tick: eligible GitHub issues → Multica; blocked/gate state → labels, nudges, reviews. The timer runs it; safe by hand | anywhere |

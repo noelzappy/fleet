@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/noelzappy/fleet/internal/fleetsync"
 	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +116,7 @@ func killCmd() *cobra.Command {
 			}
 		}
 		if len(rows) == 0 && !shell.DryRun {
-			fmt.Fprintf(os.Stderr, "no Multica issue mirrors #%s (never dispatched, or already closed)\n", n)
+			ui.Errf("no Multica issue mirrors #%s (never dispatched, or already closed)\n", n)
 		}
 		steps := []string{
 			fmt.Sprintf(`gh issue edit -R %s %s --add-label %s --remove-label %s`, R, n, shell.Quote(cfg.Labels.Stuck), shell.Quote(cfg.Labels.Ready)),

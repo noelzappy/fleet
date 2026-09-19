@@ -23,6 +23,8 @@ func Root() *cobra.Command {
 		Use:          "fleet",
 		Short:        "Set up, run, and supervise a multi-model coding-agent fleet against a repo",
 		SilenceUsage: true,
+		// main prints the error through ui.Fail so it is styled like the rest of the output.
+		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// Match the full path: `orchestrator init` and `github init` are also named "init".
 			switch p := cmd.CommandPath(); {
@@ -44,7 +46,7 @@ func Root() *cobra.Command {
 	root.AddCommand(
 		initCmd(), bootstrapCmd(), harnessCmd(), githubCmd(), orchestratorCmd(),
 		issuesCmd(), syncCmd(), upCmd(), pauseCmd(), resumeCmd(), killCmd(), panicCmd(),
-		statusCmd(), digestCmd(), versionCmd(),
+		statusCmd(), watchCmd(), digestCmd(), versionCmd(),
 	)
 	return root
 }

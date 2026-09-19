@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/noelzappy/fleet/internal/config"
 )
@@ -102,8 +103,15 @@ type State struct {
 	GH      []GHIssue
 	Multica []MIssue
 	PRs     []PR
-	// SignedOut holds harness names whose CLI isn't signed in; routing skips their profiles.
+	// SignedOut holds harness names whose CLI isn't signed in, or are out of quota; routing
+	// skips their profiles.
 	SignedOut map[string]bool
+	// Cooling is when each out-of-quota harness's cooldown ends. Informational: SignedOut
+	// already carries the routing effect.
+	Cooling map[string]time.Time
+	// Notes are observations worth telling the operator (a harness signed out, a cooldown).
+	// observe collects them instead of printing so a full-screen UI can show them.
+	Notes []string
 }
 
 // Action is one thing to do. Exactly one field group is set.

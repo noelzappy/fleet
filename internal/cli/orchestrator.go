@@ -15,6 +15,7 @@ import (
 	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/noelzappy/fleet/internal/templates"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -181,7 +182,7 @@ func orchInit(cmd *cobra.Command, _ []string) error {
 	// The daemon reconciles the commit hook in its repo caches at startup; a running
 	// daemon keeps the old hook until restarted (in-flight runs re-queue).
 	if changed && shell.Check(ctx, p.ActiveCheck(jobs[0])) {
-		fmt.Fprintln(os.Stderr, "● restart daemon so the hook change takes effect")
+		ui.Errln("● restart daemon so the hook change takes effect")
 		if err := shell.Run(ctx, p.StopCmd(jobs[0])+" && "+p.StartCmd(jobs[0]), nil); err != nil {
 			return err
 		}
@@ -323,7 +324,7 @@ func ensureWorkspace(ctx context.Context) error {
 		}
 	}
 	if id == "" {
-		fmt.Fprintf(os.Stderr, "● workspace %s\n", name)
+		ui.Errf("● workspace %s\n", name)
 		out, err := shell.Output(ctx, fmt.Sprintf("multica workspace create --output json --name %s --slug %s --issue-prefix %s",
 			shell.Quote(name), shell.Quote(slug(name)), shell.Quote(issuePrefix(name))))
 		if err != nil {
@@ -338,7 +339,7 @@ func ensureWorkspace(ctx context.Context) error {
 			return fmt.Errorf("multica workspace create: no id in %q", out)
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "✓ workspace %s\n", name)
+		ui.Errf("✓ workspace %s\n", name)
 	}
 	if id == "" {
 		id = "<workspace-id>"
@@ -420,12 +421,12 @@ func ensureAgents(ctx context.Context, runtimes map[string]string) error {
 	}
 	for _, name := range cfg.ProfilesWhere(func(string, config.Profile) bool { return true }) {
 		if exists[name] {
-			fmt.Fprintf(os.Stderr, "✓ agent %s\n", name)
+			ui.Errf("✓ agent %s\n", name)
 			continue
 		}
 		p := cfg.Profiles[name]
 		h := cfg.Harnesses[p.Harness]
-		fmt.Fprintf(os.Stderr, "● agent %s\n", name)
+		ui.Errf("● agent %s\n", name)
 		conc := p.Concurrency
 		if conc < 1 {
 			conc = 1 // Multica's minimum; sync never routes to a concurrency-0 profile anyway
@@ -474,10 +475,10 @@ const authCheck = "multica auth status 2>&1 | grep -qiv 'not authenticated'"
 
 func ensureLogin(ctx context.Context, api, app, dir, compose string) error {
 	if shell.Check(ctx, authCheck) {
-		fmt.Fprintln(os.Stderr, "✓ multica login")
+		ui.Errln("✓ multica login")
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "● multica login")
+	ui.Errln("● multica login")
 	email := cfg.Orchestrator.OwnerEmail
 	tmp := config.ExpandPath("~/.config/fleet/multica-pat.tmp")
 	if email == "" {
@@ -590,10 +591,10 @@ func ensureOwnerCommits(ctx context.Context, api string) (changed bool, err erro
 		settings = map[string]any{}
 	}
 	if v, ok := settings["co_authored_by_enabled"].(bool); ok && !v {
-		fmt.Fprintln(os.Stderr, "✓ agent commits carry no Co-authored-by trailer")
+		ui.Errln("✓ agent commits carry no Co-authored-by trailer")
 		return false, nil
 	}
-	fmt.Fprintln(os.Stderr, "● agent commits carry no Co-authored-by trailer")
+	ui.Errln("● agent commits carry no Co-authored-by trailer")
 	settings["co_authored_by_enabled"] = false
 	body, _ := json.Marshal(map[string]any{"settings": settings})
 	if _, err := shell.OutputInput(ctx, "curl -fsS -X PATCH -H 'Content-Type: application/json' -H @"+shell.Quote(hdr)+" --data-binary @- "+url, string(body)); err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/fleetsync"
 	"github.com/noelzappy/fleet/internal/shell"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -30,17 +31,23 @@ func syncCmd() *cobra.Command {
 			if err := requireAppIsolation(ctx); err != nil {
 				return fmt.Errorf("sync refused: %w", err)
 			}
-			st, err := observe(ctx)
+			st, err := observe(ctx, true)
 			if err != nil {
 				return err
 			}
+			for _, n := range st.Notes {
+				ui.Errln(n)
+			}
+			for _, n := range stalledNotes(fleetsync.Stalled(cfg, st)) {
+				ui.Errln(n)
+			}
 			actions := fleetsync.Plan(cfg, st)
 			if len(actions) == 0 {
-				fmt.Fprintln(os.Stderr, "sync: nothing to do")
+				ui.Errln("sync: nothing to do")
 				return nil
 			}
 			for _, a := range actions {
-				fmt.Fprintln(os.Stderr, "● "+a.String())
+				ui.Errln("● " + a.String())
 				if err := apply(ctx, a); err != nil {
 					return fmt.Errorf("%s: %w", a, err)
 				}
@@ -54,12 +61,12 @@ const multica = "multica" // on PATH; orchestrator init installs it
 
 // observe gathers the tick's inputs: every GitHub issue (closed ones decide
 // dependencies), fleet's Multica issues, and open PRs with their gate runs.
-func observe(ctx context.Context) (fleetsync.State, error) {
+func observe(ctx context.Context, persist bool) (fleetsync.State, error) {
 	var st fleetsync.State
 	st.SignedOut = signedOut(ctx, cfg.Harnesses)
 	for _, n := range sortedHarnessNames() {
 		if st.SignedOut[n] {
-			fmt.Fprintf(os.Stderr, "sync: harness %s is signed out; its profiles get no new work\n", n)
+			st.Notes = append(st.Notes, fmt.Sprintf("sync: harness %s is signed out; its profiles get no new work", n))
 		}
 	}
 	R := shell.Quote(cfg.Project.Repo)
@@ -161,7 +168,7 @@ func observe(ctx context.Context) (fleetsync.State, error) {
 		}
 		st.PRs = append(st.PRs, pr)
 	}
-	applyCooldowns(&st, time.Now())
+	applyCooldowns(&st, time.Now(), persist)
 	return st, nil
 }
 
@@ -172,7 +179,7 @@ const cooldownFile = "~/.config/fleet/cooldowns.json"
 // applyCooldowns starts a cooldown for every harness a run just failed on for lack of
 // quota, then marks the cooling harnesses like signed-out ones so routing skips them and
 // retries re-route. Losing the file only costs one more failed run per harness.
-func applyCooldowns(st *fleetsync.State, now time.Time) {
+func applyCooldowns(st *fleetsync.State, now time.Time, persist bool) {
 	path := config.ExpandPath(cooldownFile)
 	table := map[string]fleetsync.Cooldown{}
 	if b, err := os.ReadFile(path); err == nil {
@@ -183,10 +190,10 @@ func applyCooldowns(st *fleetsync.State, now time.Time) {
 		d = 5 * time.Hour // config.Load validates; this guards a hand-built config
 	}
 	table, changed := fleetsync.UpdateCooldowns(table, st.Multica, func(p string) string { return cfg.Profiles[p].Harness }, now, d)
-	if changed {
+	if changed && persist {
 		if b, err := json.MarshalIndent(table, "", "  "); err == nil {
 			if err := shell.WriteFile(path, b, 0o600); err != nil {
-				fmt.Fprintf(os.Stderr, "sync: can't save cooldowns: %v\n", err)
+				st.Notes = append(st.Notes, fmt.Sprintf("sync: can't save cooldowns: %v", err))
 			}
 		}
 	}
@@ -199,9 +206,10 @@ func applyCooldowns(st *fleetsync.State, now time.Time) {
 		names = append(names, h)
 	}
 	sort.Strings(names)
+	st.Cooling = cooling
 	for _, h := range names {
 		st.SignedOut[h] = true
-		fmt.Fprintf(os.Stderr, "sync: harness %s is out of quota until %s; its profiles get no new work\n", h, cooling[h].Local().Format("15:04 Mon"))
+		st.Notes = append(st.Notes, fmt.Sprintf("sync: harness %s is out of quota until %s; its profiles get no new work", h, cooling[h].Local().Format("15:04 Mon")))
 	}
 }
 
@@ -553,4 +561,18 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// stalledNotes phrases fleetsync.Stalled for the sync log, in issue order.
+func stalledNotes(stalled map[int]string) []string {
+	nums := make([]int, 0, len(stalled))
+	for n := range stalled {
+		nums = append(nums, n)
+	}
+	sort.Ints(nums)
+	var out []string
+	for _, n := range nums {
+		out = append(out, fmt.Sprintf("sync: can't dispatch #%d, it is ready: %s", n, stalled[n]))
+	}
+	return out
 }

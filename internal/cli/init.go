@@ -8,6 +8,7 @@ import (
 	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/noelzappy/fleet/internal/templates"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +30,7 @@ func initCmd() *cobra.Command {
 			}
 			for dst, name := range files {
 				if _, err := os.Stat(dst); err == nil {
-					fmt.Fprintf(os.Stderr, "skip %s (exists)\n", dst)
+					ui.Errf("skip %s (exists)\n", dst)
 					continue
 				}
 				b, err := templates.Render(name, f)

@@ -21,6 +21,7 @@ import (
 	"github.com/noelzappy/fleet/internal/ghapp"
 	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -49,7 +50,29 @@ func githubAppCmd() *cobra.Command {
 		Short: "undo `use`: remove the git helper, gh wrapper and PATH blocks (project or box mode)",
 		RunE:  func(cmd *cobra.Command, _ []string) error { return appUnuse(context.Background()) },
 	}
-	c.AddCommand(create, use, unuse)
+	var appID int64
+	var keyFile string
+	var force bool
+	imp := &cobra.Command{
+		Use:   "import",
+		Short: "adopt an existing GitHub App from its App ID and a private key (no new App is registered)",
+		Long: `Use this when the App already exists on GitHub but this machine has lost its key or
+state (~/.config/fleet/gh-app.*), or when you registered the App by hand. Find the App ID on
+the App's settings page (Developer settings > GitHub Apps > your App > About), and generate a
+key under "Private keys". fleet checks the key against GitHub, refuses an App with forbidden
+permissions, stores both, and looks for the installation on ` + "`project.repo`" + `.`,
+		Example: "  fleet github app import --app-id 4995391 --key ~/Downloads/paylte-fleet.2026-09-19.private-key.pem",
+		Args:    cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return appImport(context.Background(), appID, keyFile, force)
+		},
+	}
+	imp.Flags().Int64Var(&appID, "app-id", 0, "the App's numeric ID (required)")
+	imp.Flags().StringVar(&keyFile, "key", "", "path to the App's private key, a .pem file (required)")
+	imp.Flags().BoolVar(&force, "force", false, "replace the App already recorded on this machine")
+	_ = imp.MarkFlagRequired("app-id")
+	_ = imp.MarkFlagRequired("key")
+	c.AddCommand(create, use, unuse, imp)
 	return c
 }
 
@@ -94,14 +117,14 @@ func githubTokenCmd() *cobra.Command {
 	return c
 }
 
-const ghAPI = "https://api.github.com"
+var ghAPI = "https://api.github.com" // a var so tests can point it at a local server
 
 var codeRE = regexp.MustCompile(`^[A-Za-z0-9_-]{8,}$`)
 
 func appCreate(ctx context.Context, listen, code string) error {
 	st, err := ghapp.LoadState()
 	if err == nil && st.InstallationID != 0 {
-		fmt.Fprintf(os.Stderr, "✓ GitHub App %s installed on %s (installation %d)\n", st.Slug, cfg.Project.Repo, st.InstallationID)
+		ui.Errf("✓ GitHub App %s installed on %s (installation %d)\n", st.Slug, cfg.Project.Repo, st.InstallationID)
 		return nil
 	}
 	if err != nil { // no App yet: register one
@@ -129,7 +152,7 @@ func appCreate(ctx context.Context, listen, code string) error {
 			return err
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "✓ GitHub App %s registered\n", st.Slug)
+		ui.Errf("✓ GitHub App %s registered\n", st.Slug)
 	}
 	return waitInstall(ctx, st)
 }
@@ -147,7 +170,7 @@ func manifestHandshake(ctx context.Context, listen, ownerType, owner string) (st
 	base := "http://" + listen
 	manifest, _ := json.Marshal(ghapp.Manifest(cfg.GitHub.AppSlug, cfg.Project.Repo, base+"/callback"))
 	if shell.DryRun {
-		fmt.Fprintf(os.Stderr, "→ serve %s/ → POST %s\n  manifest: %s\n", base, ghapp.NewURL(ownerType, owner, "<state>"), manifest)
+		ui.Errf("→ serve %s/ → POST %s\n  manifest: %s\n", base, ghapp.NewURL(ownerType, owner, "<state>"), manifest)
 		return "<code>", nil
 	}
 	codes := make(chan string, 1)
@@ -183,8 +206,8 @@ func manifestHandshake(ctx context.Context, listen, ownerType, owner string) (st
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	defer srv.Close()
-	fmt.Fprintf(os.Stderr, "● open %s/ in your browser and click \"Create GitHub App\"\n", base)
-	fmt.Fprintf(os.Stderr, "  if GitHub's redirect can't load, copy the code= value from its URL and run: fleet github app create --code <code>\n")
+	ui.Errf("● open %s/ in your browser and click \"Create GitHub App\"\n", base)
+	ui.Errf("  if GitHub's redirect can't load, copy the code= value from its URL and run: fleet github app create --code <code>\n")
 	select {
 	case c := <-codes:
 		return c, nil
@@ -227,21 +250,24 @@ func convertManifest(ctx context.Context, code string) (ghapp.State, error) {
 	if err := shell.WriteFile(ghapp.StatePath, st.JSON(), 0o600); err != nil {
 		return st, err
 	}
-	fmt.Fprintf(os.Stderr, "✓ GitHub App %s registered (id %d); private key at %s\n", st.Slug, st.ID, cfg.GitHub.PrivateKeyPath)
+	ui.Errf("✓ GitHub App %s registered (id %d); private key at %s\n", st.Slug, st.ID, cfg.GitHub.PrivateKeyPath)
 	return st, nil
 }
 
 // waitInstall prints the install link and polls until the App is installed on the repo.
 func waitInstall(ctx context.Context, st ghapp.State) error {
-	fmt.Fprintf(os.Stderr, "● install it on %s only: https://github.com/apps/%s/installations/new\n", cfg.Project.Repo, st.Slug)
+	ui.Errf("● install it on %s only: https://github.com/apps/%s/installations/new\n", cfg.Project.Repo, st.Slug)
 	for attempt := 0; ; attempt++ {
+		shell.Silent = true // a 404 every 5s is the expected answer until the App is installed
 		id, err := repoInstallation(ctx, st)
+		shell.Silent = false
+		ui.LiveDone()
 		if err == nil && id != 0 {
 			st.InstallationID = id
 			if err := shell.WriteFile(ghapp.StatePath, st.JSON(), 0o600); err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "✓ installed on %s (installation %d). Next on the box: fleet github app use\n", cfg.Project.Repo, id)
+			ui.Errf("✓ installed on %s (installation %d). Next on the box: fleet github app use\n", cfg.Project.Repo, id)
 			return nil
 		}
 		if shell.DryRun {
@@ -250,6 +276,7 @@ func waitInstall(ctx context.Context, st ghapp.State) error {
 		if attempt >= 180 {
 			return fmt.Errorf("not installed on %s after 15 minutes; re-run `fleet github app create` once it is", cfg.Project.Repo)
 		}
+		ui.Live("  waiting for the install… %ds (gives up after 15 min)", attempt*5)
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -268,12 +295,22 @@ func repoInstallation(ctx context.Context, st ghapp.State) (int64, error) {
 // appAPI calls the GitHub API authenticated as the App (JWT). The JWT travels in a 0600
 // header file so it never appears in a trace or a process list.
 func appAPI(ctx context.Context, st ghapp.State, method, path, body string) (string, error) {
-	var jwt string
+	var pemBytes []byte
 	if !shell.DryRun {
-		pemBytes, err := os.ReadFile(cfg.GitHub.PrivateKeyPath)
-		if err != nil {
+		var err error
+		if pemBytes, err = os.ReadFile(cfg.GitHub.PrivateKeyPath); err != nil {
 			return "", fmt.Errorf("App private key: %w", err)
 		}
+	}
+	return appAPIWithKey(ctx, st, pemBytes, method, path, body)
+}
+
+// appAPIWithKey is appAPI with the key in hand, for `app import`, which verifies a key
+// before it replaces the one on disk.
+func appAPIWithKey(ctx context.Context, st ghapp.State, pemBytes []byte, method, path, body string) (string, error) {
+	var jwt string
+	if !shell.DryRun {
+		var err error
 		if jwt, err = ghapp.JWT(st.ClientID, pemBytes, time.Now()); err != nil {
 			return "", err
 		}
@@ -383,9 +420,9 @@ func appUse(ctx context.Context) error {
 	wrapper := ghapp.Wrapper(self, abs, gh)
 	wrapperPath := filepath.Join(ghapp.WrapperDir, "gh")
 	if cur, err := os.ReadFile(wrapperPath); err == nil && string(cur) == string(wrapper) {
-		fmt.Fprintln(os.Stderr, "✓ gh wrapper")
+		ui.Errln("✓ gh wrapper")
 	} else {
-		fmt.Fprintln(os.Stderr, "● gh wrapper")
+		ui.Errln("● gh wrapper")
 		if err := shell.WriteFile(wrapperPath, wrapper, 0o755); err != nil {
 			return err
 		}
@@ -402,9 +439,9 @@ func appUse(ctx context.Context) error {
 		return err
 	}
 	if projectScoped() {
-		fmt.Fprintf(os.Stderr, "GitHub App %s is in use for %s only. Your gh login and git setup are untouched; fleet's own commands and its agents get the App through the gh wrapper.\nAgents run as you, so this scopes accidents, not a determined agent (README › GitHub App). Restart the daemon: fleet pause --hard && fleet up\n", st.Slug, cfg.Project.Repo)
+		ui.Errf("GitHub App %s is in use for %s only. Your gh login and git setup are untouched; fleet's own commands and its agents get the App through the gh wrapper.\nAgents run as you, so this scopes accidents, not a determined agent (README › GitHub App). Restart the daemon: fleet pause --hard && fleet up\n", st.Slug, cfg.Project.Repo)
 	} else {
-		fmt.Fprintf(os.Stderr, "GitHub App %s is in use. Restart the daemon so agents start with the new PATH: fleet pause --hard && fleet up\n", st.Slug)
+		ui.Errf("GitHub App %s is in use. Restart the daemon so agents start with the new PATH: fleet pause --hard && fleet up\n", st.Slug)
 	}
 	return nil
 }
@@ -539,7 +576,7 @@ func appUnuse(ctx context.Context) error {
 	if _, err := runSteps(ctx, unuseSteps(cfg.Project.Repo, p.ProfileFiles())); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "GitHub App setup removed. If box mode removed your personal gh login, sign in again: gh auth login")
+	ui.Errln("GitHub App setup removed. If box mode removed your personal gh login, sign in again: gh auth login")
 	return nil
 }
 
@@ -567,4 +604,77 @@ func requireAppIsolation(ctx context.Context) error {
 		return fmt.Errorf("github.auth is app but a personal gh login exists on this box; agents could use it to bypass the App. Run `fleet github app use`")
 	}
 	return nil
+}
+
+// appImport adopts an App that already exists: it proves the key by calling GET /app as the
+// App, applies the same permission limits a minted token gets, then stores the key and state
+// and finds (or waits for) the installation on the project repo. The key on disk is replaced
+// only after GitHub has accepted the new one.
+func appImport(ctx context.Context, appID int64, keyFile string, force bool) error {
+	if appID <= 0 {
+		return fmt.Errorf("--app-id must be the App's numeric ID")
+	}
+	old, oldErr := ghapp.LoadState()
+	if oldErr == nil && old.ID != 0 && old.ID != appID && !force {
+		return fmt.Errorf("this machine already has App %s (id %d); pass --force to replace it", old.Slug, old.ID)
+	}
+	pemBytes, err := os.ReadFile(config.ExpandPath(keyFile))
+	if err != nil && !shell.DryRun {
+		return fmt.Errorf("read key: %w", err)
+	}
+	// GitHub accepts the numeric App ID as the JWT issuer, which is all we know before /app
+	// tells us the client ID.
+	probe := ghapp.State{ClientID: strconv.FormatInt(appID, 10)}
+	if !shell.DryRun {
+		if _, err := ghapp.JWT(probe.ClientID, pemBytes, time.Now()); err != nil {
+			return fmt.Errorf("%s isn't a usable private key: %w", keyFile, err)
+		}
+	}
+	out, err := appAPIWithKey(ctx, probe, pemBytes, "GET", "/app", "")
+	if err != nil {
+		return fmt.Errorf("GitHub rejected App %d with this key (wrong App ID, or a key that was revoked or belongs to another App): %w", appID, err)
+	}
+	var app struct {
+		ID          int64             `json:"id"`
+		Slug        string            `json:"slug"`
+		ClientID    string            `json:"client_id"`
+		HTMLURL     string            `json:"html_url"`
+		Permissions map[string]string `json:"permissions"`
+	}
+	if err := decode(out, &app); err != nil {
+		return fmt.Errorf("GET /app: %w", err)
+	}
+	if shell.DryRun {
+		app.ID, app.Slug, app.ClientID = appID, cfg.GitHub.AppSlug, "<client-id>"
+	}
+	if app.ID != appID || app.Slug == "" || app.ClientID == "" {
+		return fmt.Errorf("GET /app returned an unexpected App (id %d, slug %q)", app.ID, app.Slug)
+	}
+	if bad := ghapp.DenyPermissions(app.Permissions); len(bad) > 0 {
+		return fmt.Errorf("refusing to import App %s: it has %s. Remove them in the App's settings (agents must not be able to change workflows, secrets or admin settings)", app.Slug, strings.Join(bad, ", "))
+	}
+	if err := shell.WriteFile(cfg.GitHub.PrivateKeyPath, pemBytes, 0o600); err != nil {
+		return err
+	}
+	st := ghapp.State{ID: app.ID, Slug: app.Slug, ClientID: app.ClientID, HTMLURL: app.HTMLURL}
+	if oldErr == nil && old.ID == app.ID { // same App: keep what a previous `use` recorded
+		st.InstallationID, st.RealGH = old.InstallationID, old.RealGH
+	}
+	if err := shell.WriteFile(ghapp.StatePath, st.JSON(), 0o600); err != nil {
+		return err
+	}
+	ui.Errf("✓ GitHub App %s (id %d) imported; private key at %s\n", st.Slug, st.ID, cfg.GitHub.PrivateKeyPath)
+	if id, err := repoInstallation(ctx, st); err == nil && id != 0 {
+		st.InstallationID = id
+		if err := shell.WriteFile(ghapp.StatePath, st.JSON(), 0o600); err != nil {
+			return err
+		}
+		ui.Errf("✓ installed on %s (installation %d). Next: fleet github app use\n", cfg.Project.Repo, id)
+		return nil
+	}
+	st.InstallationID = 0 // a stale id from an earlier App or install would mislead `use`
+	if err := shell.WriteFile(ghapp.StatePath, st.JSON(), 0o600); err != nil {
+		return err
+	}
+	return waitInstall(ctx, st)
 }

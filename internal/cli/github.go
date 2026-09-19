@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/noelzappy/fleet/internal/config"
 	"github.com/noelzappy/fleet/internal/shell"
 	"github.com/noelzappy/fleet/internal/templates"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +54,7 @@ func githubInit(cmd *cobra.Command, _ []string) error {
 	if err := shell.WriteFile(filepath.Join(cfg.Project.Root, ".github/workflows/pr-contract.yml"), pc, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "commit .github/workflows/pr-contract.yml via a PR and add pr-contract to the branch's required checks")
+	ui.Errln("commit .github/workflows/pr-contract.yml via a PR and add pr-contract to the branch's required checks")
 	if cfg.Notify.Telegram != nil {
 		b, err := templates.Render("fleet-notify.yml.tmpl", cfg)
 		if err != nil {
@@ -64,11 +64,11 @@ func githubInit(cmd *cobra.Command, _ []string) error {
 		if err := shell.WriteFile(dst, b, 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "commit", dst, "via a PR")
-		fmt.Fprintf(os.Stderr, "ensure repo secrets exist: %s, %s\n", cfg.Notify.Telegram.TokenSecret, cfg.Notify.Telegram.ChatSecret)
+		ui.Errln("commit", dst, "via a PR")
+		ui.Errf("ensure repo secrets exist: %s, %s\n", cfg.Notify.Telegram.TokenSecret, cfg.Notify.Telegram.ChatSecret)
 	}
 	if cfg.GitHub.Auth != "app" {
-		fmt.Fprintln(os.Stderr, "github.auth is gh: agents use this box's gh login. Before a client repo: set github.auth: app, then fleet github app create && fleet github app use")
+		ui.Errln("github.auth is gh: agents use this box's gh login. Before a client repo: set github.auth: app, then fleet github app create && fleet github app use")
 	}
 	return nil
 }

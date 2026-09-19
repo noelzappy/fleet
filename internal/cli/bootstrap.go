@@ -7,6 +7,7 @@ import (
 
 	"github.com/noelzappy/fleet/internal/platform"
 	"github.com/noelzappy/fleet/internal/shell"
+	"github.com/noelzappy/fleet/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -46,10 +47,10 @@ func bootstrapCmd() *cobra.Command {
 func runSteps(ctx context.Context, steps []platform.Step) (changed int, err error) {
 	for _, s := range steps {
 		if shell.Check(ctx, s.Check) {
-			fmt.Fprintf(os.Stderr, "✓ %s\n", s.Name)
+			ui.Errf("✓ %s\n", s.Name)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "● %s\n", s.Name)
+		ui.Errf("● %s\n", s.Name)
 		if err := shell.Run(ctx, s.Apply, nil); err != nil {
 			return changed, fmt.Errorf("%s: %w", s.Name, err)
 		}
